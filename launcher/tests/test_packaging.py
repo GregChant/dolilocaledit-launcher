@@ -90,7 +90,7 @@ class PackagingTest(unittest.TestCase):
                     sys.executable,
                     str(script),
                     "--version",
-                    "1.0.0",
+                    "1.0.1",
                     "--catalog-directory",
                     str(catalog),
                     "--module-zip",
@@ -102,7 +102,7 @@ class PackagingTest(unittest.TestCase):
                     "--linux-installer",
                     str(installer),
                     "--external-download-base-url",
-                    "https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.0",
+                    "https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.1",
                 ],
                 check=False,
                 stdout=subprocess.PIPE,
@@ -116,7 +116,7 @@ class PackagingTest(unittest.TestCase):
             for entry in manifest["artifacts"]:
                 self.assertEqual(
                     entry["url"],
-                    "https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.0/"
+                    "https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.1/"
                     + entry["filename"],
                 )
                 self.assertTrue((catalog / "files" / entry["filename"]).is_file())

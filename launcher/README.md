@@ -163,7 +163,7 @@ clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 1.0.0 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.0.1 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la

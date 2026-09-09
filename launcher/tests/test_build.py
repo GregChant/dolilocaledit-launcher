@@ -61,12 +61,12 @@ class SecureBuildEnvironmentTest(unittest.TestCase):
         repository = Path(__file__).resolve().parents[2]
         version, numeric = BUILD.project_version(repository)
         resource = BUILD.windows_version_resource(version, numeric)
-        self.assertEqual(version, "1.0.0")
-        self.assertEqual(numeric, (1, 0, 0, 0))
+        self.assertEqual(version, "1.0.1")
+        self.assertEqual(numeric, (1, 0, 1, 0))
         self.assertIn("StringStruct('CompanyName', 'Experts Conseils Chanton')", resource)
         self.assertIn("StringStruct('ProductName', 'Doli Local Edit')", resource)
-        self.assertIn("StringStruct('FileVersion', '1.0.0')", resource)
-        self.assertIn("StringStruct('ProductVersion', '1.0.0')", resource)
+        self.assertIn("StringStruct('FileVersion', '1.0.1')", resource)
+        self.assertIn("StringStruct('ProductVersion', '1.0.1')", resource)
         self.assertIn("Copyright (C) 2026 Experts Conseils Chanton", resource)
 
 
