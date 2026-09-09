@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dolilocaledit-launcher"
+version = "0.1.9"
+description = "Minimal, editor-independent launcher for Doli Local Edit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+authors = [{name = "Experts Conseils Chanton"}]
+dependencies = []
+
+[project.scripts]
+dolilocaledit-launcher = "dolilocaledit_launcher.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

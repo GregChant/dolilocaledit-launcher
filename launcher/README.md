@@ -1,0 +1,165 @@
+# Lanceur Doli Local Edit
+
+Ce répertoire contient le prototype multiplateforme du composant local. Il n'embarque aucun
+éditeur : le poste utilise son association de fichiers par défaut, un éditeur choisi localement
+ou une commande configurée localement. Le serveur ne peut fournir ni programme ni argument de
+commande.
+
+## Choix technique
+
+Le lanceur utilise uniquement la bibliothèque standard Python. Les sources restent testables
+avec Python 3.10 ou plus récent ; les exécutables publiables sont construits exclusivement avec
+Python 3.14.7 et PyInstaller 6.22.2 dans les environnements isolés et verrouillés décrits dans
+[le README du dépôt](../README.md). La signature reste une porte de livraison : un exécutable non
+signé est destiné au développement, pas à un déploiement utilisateur.
+
+## Garanties du prototype
+
+- seules les origines Dolibarr explicitement approuvées dans la configuration locale sont
+  acceptées ; HTTP est limité à la boucle locale de développement ;
+- le ticket de 120 secondes est échangé immédiatement par le processus de protocole ; le
+  processus de travail est ensuite lancé sans secret dans sa ligne de commande ;
+- le jeton Bearer passe au processus de travail par un tube anonyme, reste uniquement en mémoire
+  et n'est jamais écrit dans le manifeste de reprise ;
+- les redirects HTTP sont refusés afin de ne jamais transférer le Bearer vers une autre URL ;
+- le téléchargement est limité à 1 Gio, contrôlé par taille, ETag et SHA-256, puis stocké avec
+  des permissions privées ;
+- une révision stable est copiée dans un instantané avant dépôt. `If-Match`, l'empreinte de base
+  et la version de location sont envoyés au serveur ;
+- la copie locale est conservée en cas de coupure, conflit ou confirmation incomplète.
+- une origine inconnue n'est ajoutée qu'après confirmation locale explicite au premier clic ;
+- sous Windows et Linux, l'exécutable autonome s'installe dans le profil courant et enregistre le
+  protocole sans élévation (`HKCU` ou entrée XDG).
+
+## Développement
+
+Depuis la racine du dépôt :
+
+```bash
+PYTHONPATH=launcher/src python3 -m unittest discover -s launcher/tests -v
+PYTHONPATH=launcher/src python3 -m dolilocaledit_launcher config-path
+```
+
+Le parcours HTTP de bout en bout avec Dolibarr reste qualifié dans le dépôt privé du module ; ce
+dépôt public exerce uniquement la frontière locale et le paquetage du lanceur.
+
+Pour une installation Python locale de développement :
+
+```bash
+python3 -m pip install --user -e ./launcher
+dolilocaledit-launcher trust https://erp.example
+dolilocaledit-launcher register --executable /chemin/absolu/vers/dolilocaledit-launcher
+```
+
+`register` gère l'inscription par utilisateur du protocole sous Windows et Linux. Sous Linux,
+`install` copie le binaire sous `~/.local/bin` et `uninstall` retire le programme et son entrée
+XDG tout en conservant les reprises. Sous macOS,
+l'inscription devra être fournie dans le paquet `.app` signé.
+
+Le mode éditable exige un `pip` et un `setuptools` récents. Si la distribution fournit une version
+ancienne, les mettre à niveau dans le profil utilisateur avant l'installation :
+
+```bash
+python3 -m pip install --user --upgrade 'pip>=24' 'setuptools>=68' wheel
+```
+
+## Configuration locale
+
+Le chemin exact est donné par `dolilocaledit-launcher config-path`. Sous POSIX, le fichier doit
+appartenir à l'utilisateur et avoir les permissions `0600`. Exemple :
+
+```json
+{
+  "trusted_origins": [
+    "https://erp.example"
+  ],
+  "editors": {
+    ".docx": [
+      "/usr/bin/libreoffice",
+      "--writer",
+      "{file}"
+    ]
+  },
+  "untracked_editor_extensions": [],
+  "system_default_editor_extensions": [],
+  "poll_seconds": 1.0,
+  "stable_seconds": 2.0,
+  "api_timeout_seconds": 30.0
+}
+```
+
+Chaque éditeur configuré doit être un chemin absolu. Les arguments sont un tableau et sont
+passés directement au processus avec `shell=False`. `{file}` est remplacé par le chemin local ;
+s'il est absent, ce chemin est ajouté comme dernier argument. Pour publier la dernière révision,
+la commande configurée doit rester attachée jusqu'à la fermeture de l'éditeur.
+
+Sous Windows ou Linux graphique, si aucun choix n'est déjà enregistré, le lanceur affiche un sélecteur local pour
+chaque format pris en charge. Il propose les applications reconnues, l'association Windows
+ou Linux actuelle et **Choisir une autre application…**, qui ouvre un parcours limité aux exécutables du
+poste. Linux utilise Zenity ou KDialog. La case **Toujours utiliser ce choix** est décochée par défaut. Lorsqu'elle est cochée, la
+commande ou le choix de l'association système est enregistré uniquement dans ce fichier de
+configuration. Pour rétablir la question, exécuter
+`dolilocaledit-launcher forget-editor .docx`. Les applications reconnues sont trouvées via les
+entrées Windows « App Paths » et les emplacements d'installation usuels ; aucune liste de
+programmes ne vient de Dolibarr.
+
+Office et LibreOffice pouvant réutiliser un processus déjà ouvert, un choix automatique mémorisé
+est traité comme une association dont la fermeture n'est pas observable. Le lanceur publie donc
+la première sauvegarde stable et conserve la copie de travail par prudence.
+
+Une session dont la durée maximale est atteinte sans changement enregistré sur disque est
+annulée sans boîte d'erreur. Le lanceur supprime sa copie locale lorsqu'elle n'est plus ouverte ;
+si Windows empêche ce nettoyage, le manifeste prend l'état `expired_unchanged` et doit être
+vérifié avant suppression, car l'éditeur peut encore enregistrer le fichier après l'échéance.
+
+Sans association explicite, le lanceur ouvre l'application système. Comme certains systèmes ne
+permettent pas d'observer de façon fiable la fermeture de cette application, la première
+sauvegarde stable est publiée puis la copie de travail est conservée avec l'état
+`published_recovery`. Les dossiers conservés sont listés par :
+
+```bash
+dolilocaledit-launcher recoveries
+```
+
+Cette limite du prototype devra être remplacée par une confirmation locale claire avant la
+version stable. Il ne faut pas supprimer une reprise tant que son contenu n'a pas été vérifié.
+
+## Construction d'un exécutable
+
+PyInstaller doit construire chaque cible sur son propre système ; ce n'est pas un compilateur
+croisé. La version de l'outil est figée dans `requirements-build.txt` et vérifiée par `build.py` :
+
+```bash
+python3 -m pip install -r launcher/requirements-build.txt
+python3 launcher/build.py --output-directory dist/launcher
+```
+
+Une construction exécutée sous Windows produit aussi `install.cmd`. Distribuer les deux fichiers
+dans le même dossier ; l'utilisateur lance `install.cmd` une fois. L'exécutable est copié sous
+`%LOCALAPPDATA%\Programs\DoliLocalEdit\dolilocaledit-launcher.exe`. Au premier clic dans Dolibarr,
+une boîte locale affiche seulement l'origine canonique à approuver, jamais le ticket.
+Le binaire Windows utilise le sous-système graphique : il n'ouvre pas de console pendant
+l'édition. En cas d'échec utile à l'utilisateur, sa boîte indique le document lorsqu'il a pu être
+identifié, l'origine Dolibarr, la présence de changements enregistrés, l'éventuel dossier de
+reprise, l'état de libération du verrou, une action conseillée et un code de diagnostic stable.
+Un échec antérieur à l'échange indique explicitement que le document n'est pas encore déterminé.
+Le worker, qui doit survivre au court processus du gestionnaire de protocole, est lancé comme une
+instance PyInstaller indépendante afin que leurs répertoires `_MEI` puissent être supprimés sans
+course ni avertissement.
+Le fichier de version Windows embarque le nom de société **Experts Conseils Chanton**, le nom de
+produit **Doli Local Edit**, la description, le copyright et les versions fichier/produit lues
+depuis `pyproject.toml`. Vérifier ces propriétés avant d'appliquer la signature Authenticode.
+Pour un déploiement géré, `dolilocaledit-launcher.exe install --quiet` effectue la même
+installation par utilisateur sans boîte de confirmation.
+
+Une construction Linux produit le binaire et `install.sh`. Le script de livraison
+`scripts/package-launchers.py` les place dans une archive `tar.gz` qui préserve leurs bits
+d'exécution. L'utilisateur décompresse puis lance `install.sh`; aucune installation de Python
+n'est requise.
+
+Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
+[`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
+lanceur Windows 0.1.9 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+et lancé dans la porte locale, mais sa signature détachée reste une condition avant la version
+stable. macOS doit encore être construit, testé, signé et notarié. Voir la
+[présentation de la publication](../README.md).

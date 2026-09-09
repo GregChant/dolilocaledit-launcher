@@ -1,0 +1,61 @@
+FROM ubuntu@sha256:2edbbc5dc405e9612ba3584ce95480277e3eb374407b5505fe26f17df77c7dbc
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG PYTHON_VERSION=3.14.7
+ARG PYTHON_SHA256=3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81
+ARG PYINSTALLER_VERSION=6.22.2
+ARG PYINSTALLER_SHA256=89b65a3ad07d9dd5832253e37bc45f31872d10d7f9d5c9fd0fdd6088a83829dd
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        libbz2-dev \
+        libffi-dev \
+        libgdbm-dev \
+        liblzma-dev \
+        libncursesw5-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        tk-dev \
+        uuid-dev \
+        xz-utils \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/python-build
+ENV LD_LIBRARY_PATH=/opt/python/lib
+RUN curl --fail --location --proto '=https' --tlsv1.2 \
+        --output Python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz" \
+    && echo "${PYTHON_SHA256}  Python.tar.xz" | sha256sum --check --strict \
+    && tar --extract --file Python.tar.xz --xz --strip-components=1 \
+    && CFLAGS='-O2 -fstack-protector-strong -fPIC -D_FORTIFY_SOURCE=2' \
+       LDFLAGS='-Wl,-z,relro,-z,now' \
+       ./configure --prefix=/opt/python --enable-shared --with-ensurepip=install \
+    && make -j2 \
+    && make install \
+    && /opt/python/bin/python3 --version
+
+RUN /opt/python/bin/python3 -m venv /opt/dolilocaledit-build
+COPY launcher/requirements-build.txt /tmp/requirements-build.txt
+RUN /opt/dolilocaledit-build/bin/python -m pip install \
+        --disable-pip-version-check --require-hashes --no-cache-dir \
+        --requirement /tmp/requirements-build.txt \
+    && curl --fail --location --proto '=https' --tlsv1.2 \
+        --output /tmp/pyinstaller.tar.gz \
+        "https://files.pythonhosted.org/packages/source/p/pyinstaller/pyinstaller-${PYINSTALLER_VERSION}.tar.gz" \
+    && echo "${PYINSTALLER_SHA256}  /tmp/pyinstaller.tar.gz" | sha256sum --check --strict \
+    && mkdir /tmp/pyinstaller-source \
+    && tar --extract --file /tmp/pyinstaller.tar.gz --gzip \
+        --directory /tmp/pyinstaller-source --strip-components=1 \
+    && cd /tmp/pyinstaller-source/bootloader \
+    && CFLAGS='-O2 -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2' \
+       LINKFLAGS='-pie -Wl,-z,relro,-z,now' \
+       /opt/dolilocaledit-build/bin/python ./waf all \
+    && cp -a /tmp/pyinstaller-source/PyInstaller/bootloader/Linux-64bit-intel/. \
+        /opt/dolilocaledit-build/lib/python3.14/site-packages/PyInstaller/bootloader/Linux-64bit-intel/
+
+WORKDIR /source
+ENTRYPOINT ["/opt/dolilocaledit-build/bin/python", "launcher/build.py"]
