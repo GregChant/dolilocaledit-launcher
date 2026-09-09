@@ -63,12 +63,12 @@ class LinuxReleaseSigningTest(unittest.TestCase):
             catalog = root / "catalog"
             files = catalog / "files"
             files.mkdir(parents=True)
-            windows = files / "DoliLocalEdit-Setup-0.1.10.exe"
-            linux = files / "DoliLocalEdit-linux-x86_64-0.1.10.tar.gz"
+            windows = files / "DoliLocalEdit-Setup-1.0.0.exe"
+            linux = files / "DoliLocalEdit-linux-x86_64-1.0.0.tar.gz"
             windows.write_bytes(b"signed windows fixture")
             linux.write_bytes(b"linux fixture")
             result = subprocess.run(
-                [str(script), "0.1.10", str(catalog)],
+                [str(script), "1.0.0", str(catalog)],
                 check=False,
                 env={
                     **environment,

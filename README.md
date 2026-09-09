@@ -5,8 +5,8 @@ downloads one authorized Dolibarr document, opens it with an application selecte
 computer, and publishes a validated revision through the module API.
 
 This public repository is intentionally limited to the launcher, its tests and the reproducible
-build scripts. It does not contain the private Dolibarr module, customer data, signing keys or
-credentials.
+build scripts. It does not contain the private Dolibarr module, customer data, private signing
+keys or credentials. The OpenPGP public verification key is intentionally published.
 
 ## Downloads
 
@@ -14,6 +14,10 @@ Use the [versioned GitHub releases](https://github.com/GregChant/dolilocaledit-l
 
 - Windows x86-64: `DoliLocalEdit-Setup-<version>.exe`;
 - Linux x86-64: `DoliLocalEdit-linux-x86_64-<version>.tar.gz`.
+
+The current stable release is **1.0.0**. On Windows, run the signed setup executable; it installs
+the launcher for the current user without administrator rights. On Linux, extract the archive and
+run `install.sh`; it installs under `~/.local` without administrator rights.
 
 The Windows executable is Authenticode-signed and timestamped by **Experts Conseils Chanton**.
 Verify the Digital Signatures tab before installation. Linux releases include the archive's
@@ -23,7 +27,7 @@ full fingerprint through an independent channel before trusting the bundled publ
 Never download a launcher from an unversioned URL or a repository other than this one. Published
 release assets are not replaced: a change requires a new version.
 
-## Test and build
+## Source development
 
 The launcher has no third-party runtime dependency. From the repository root:
 

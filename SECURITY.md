@@ -1,6 +1,7 @@
 # Security policy
 
-No Doli Local Edit release is currently supported for production use.
+Doli Local Edit Launcher `1.0.x` is the supported stable series. Security fixes are published in
+its latest patch release; development versions `0.x` are no longer supported.
 
 Please use GitHub private vulnerability reporting for security issues. Do not open a public issue
 containing an exploit, a real document, an access token, a local recovery path or customer data.

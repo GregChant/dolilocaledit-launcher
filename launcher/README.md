@@ -1,6 +1,6 @@
 # Lanceur Doli Local Edit
 
-Ce répertoire contient le prototype multiplateforme du composant local. Il n'embarque aucun
+Ce répertoire contient le composant local multiplateforme. Il n'embarque aucun
 éditeur : le poste utilise son association de fichiers par défaut, un éditeur choisi localement
 ou une commande configurée localement. Le serveur ne peut fournir ni programme ni argument de
 commande.
@@ -13,7 +13,7 @@ Python 3.14.7 et PyInstaller 6.22.2 dans les environnements isolés et verrouill
 [le README du dépôt](../README.md). La signature reste une porte de livraison : un exécutable non
 signé est destiné au développement, pas à un déploiement utilisateur.
 
-## Garanties du prototype
+## Garanties du lanceur
 
 - seules les origines Dolibarr explicitement approuvées dans la configuration locale sont
   acceptées ; HTTP est limité à la boucle locale de développement ;
@@ -34,7 +34,7 @@ signé est destiné au développement, pas à un déploiement utilisateur.
 
 ## Développement
 
-Depuis la racine du module :
+Depuis la racine du dépôt :
 
 ```bash
 PYTHONPATH=launcher/src python3 -m unittest discover -s launcher/tests -v
@@ -122,8 +122,9 @@ sauvegarde stable est publiée puis la copie de travail est conservée avec l'é
 dolilocaledit-launcher recoveries
 ```
 
-Cette limite du prototype devra être remplacée par une confirmation locale claire avant la
-version stable. Il ne faut pas supprimer une reprise tant que son contenu n'a pas été vérifié.
+Cette conservation prudente évite de perdre une sauvegarde lorsque la fermeture de l'application
+ne peut pas être observée. Il ne faut pas supprimer une reprise tant que son contenu n'a pas été
+vérifié.
 
 ## Construction d'un exécutable
 
@@ -162,7 +163,7 @@ clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 0.1.10 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.0.0 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la
