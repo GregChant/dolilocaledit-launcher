@@ -15,13 +15,19 @@ Use the [versioned GitHub releases](https://github.com/GregChant/dolilocaledit-l
 - Windows x86-64: `DoliLocalEdit-Setup-<version>.exe`;
 - Linux x86-64: `DoliLocalEdit-linux-x86_64-<version>.tar.gz`.
 
-The current stable release is **1.0.2**. On Windows, run the signed setup executable; it installs
+The current stable release is **1.0.3**. On Windows, run the signed setup executable; it installs
 the launcher for the current user without administrator rights. On Linux, extract the archive and
 run `install.sh`; it installs under `~/.local` without administrator rights.
 
 Interactive installation now reports an explicit success or failure result. Dolibarr can then
 run a dedicated launcher check that reports the installed version and platform without
 downloading or opening a document.
+
+Windows upgrades are installed side by side under an immutable version-and-SHA-256 filename. The
+protocol registration switches to the new file immediately, while an older process is never
+terminated and may finish protecting its current editing session. Retained files are cleaned on
+a later launch once Windows releases them. Version 1.0.3 also accepts both browser forms
+`dolilocaledit://check?…` and `dolilocaledit://check/?…`.
 
 The Windows executable is Authenticode-signed and timestamped by **Experts Conseils Chanton**.
 Verify the Digital Signatures tab before installation. Linux releases include the archive's

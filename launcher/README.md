@@ -138,7 +138,10 @@ python3 launcher/build.py --output-directory dist/launcher
 
 Une construction exécutée sous Windows produit aussi `install.cmd`. Distribuer les deux fichiers
 dans le même dossier ; l'utilisateur lance `install.cmd` une fois. L'exécutable est copié sous
-`%LOCALAPPDATA%\Programs\DoliLocalEdit\dolilocaledit-launcher.exe`. Au premier clic dans Dolibarr,
+`%LOCALAPPDATA%\Programs\DoliLocalEdit` avec un nom immuable comprenant sa version et son SHA-256.
+Le protocole HKCU pointe ensuite sur ce nouveau fichier. Une mise à niveau n'arrête aucune
+ancienne instance : les fichiers encore utilisés sont conservés et signalés dans la confirmation,
+puis nettoyés automatiquement lors d'un lancement ultérieur. Au premier clic dans Dolibarr,
 une boîte locale affiche seulement l'origine canonique à approuver, jamais le ticket.
 Le binaire Windows utilise le sous-système graphique : il n'ouvre pas de console pendant
 l'édition. En cas d'échec utile à l'utilisateur, sa boîte indique le document lorsqu'il a pu être
@@ -156,9 +159,11 @@ installation par utilisateur sans boîte de confirmation.
 
 L'installation interactive affiche une boîte de réussite avec la version, le chemin installé et
 la confirmation d'enregistrement du protocole, ou une boîte d'échec avec un code exploitable.
-Le bouton **Tester le lanceur** de Dolibarr ouvre ensuite une opération `dolilocaledit://check`
-distincte : le lanceur valide l'origine approuvée et consomme le ticket éphémère pour annoncer sa
-version et sa plateforme, sans télécharger ni ouvrir de document.
+Le bouton **Tester le lanceur** de Dolibarr prépare ensuite une opération
+`dolilocaledit://check`, puis demande un second clic explicite pour l'ouvrir. Le lanceur accepte
+les formes `check?…` et `check/?…` normalisées par les navigateurs, valide l'origine approuvée et
+consomme le ticket éphémère pour annoncer sa version et sa plateforme, sans télécharger ni ouvrir
+de document.
 
 Une construction Linux produit le binaire et `install.sh`. Le script de livraison
 `scripts/package-launchers.py` les place dans une archive `tar.gz` qui préserve leurs bits
@@ -169,7 +174,7 @@ clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 1.0.2 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.0.3 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la

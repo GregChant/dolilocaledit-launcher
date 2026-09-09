@@ -63,6 +63,19 @@ def inspect_check_uri(uri: str) -> LaunchTarget:
     return _inspect_protocol_uri(uri, "check")
 
 
+def protocol_operation(uri: str) -> str:
+    """Identify the strict protocol authority before operation-specific parsing."""
+    if not isinstance(uri, str) or len(uri) > 4096:
+        raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.")
+    try:
+        parsed = urlsplit(uri)
+    except ValueError as exc:
+        raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.") from exc
+    if parsed.scheme != "dolilocaledit" or parsed.netloc not in {"open", "check"}:
+        raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.")
+    return parsed.netloc
+
+
 def _inspect_protocol_uri(uri: str, operation: str) -> LaunchTarget:
     if not isinstance(uri, str) or len(uri) > 4096:
         raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.")

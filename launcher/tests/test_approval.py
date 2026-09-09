@@ -13,10 +13,19 @@ from dolilocaledit_launcher.approval import (
 
 class ApprovalTest(unittest.TestCase):
     def test_installation_result_messages_are_explicit(self) -> None:
-        success = installation_success_message(Path(r"C:\Program Files\DoliLocalEdit\launcher.exe"), "1.0.2")
+        old = Path("dolilocaledit-launcher.exe")
+        success = installation_success_message(
+            Path(r"C:\Program Files\DoliLocalEdit\launcher.exe"),
+            "1.0.3",
+            (1234, 5678),
+            (old,),
+        )
         self.assertIn("Installation réussie", success)
-        self.assertIn("Version : 1.0.2", success)
+        self.assertIn("Version : 1.0.3", success)
         self.assertIn("dolilocaledit:// : enregistré", success)
+        self.assertIn("PID 1234, 5678", success)
+        self.assertIn("n’ont pas été fermées", success)
+        self.assertIn(old.name, success)
         failure = installation_error_message("installation_failed", "Copie impossible\nréessayez")
         self.assertIn("Échec de l’installation", failure)
         self.assertIn("Code de diagnostic : installation_failed", failure)

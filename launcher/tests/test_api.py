@@ -49,7 +49,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         if action == "launcher_check":
             if (
                 body.get("ticket") == "T" * 43
-                and body.get("launcher_version") == "1.0.2"
+                and body.get("launcher_version") == "1.0.3"
                 and body.get("platform") == "linux"
             ):
                 self.respond({"status": "confirmed"})
@@ -158,9 +158,9 @@ class ApiTest(unittest.TestCase):
 
     def test_launcher_check_posts_short_ticket_without_bearer(self) -> None:
         endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
-        DoliLocalEditApi(endpoint, 1, 5).confirm_launcher_check("T" * 43, "1.0.2", "linux")
+        DoliLocalEditApi(endpoint, 1, 5).confirm_launcher_check("T" * 43, "1.0.3", "linux")
         with self.assertRaises(ApiError):
-            DoliLocalEditApi(endpoint, 1, 5).confirm_launcher_check("short", "1.0.2", "linux")
+            DoliLocalEditApi(endpoint, 1, 5).confirm_launcher_check("short", "1.0.3", "linux")
 
     def test_external_template_change_requires_and_forwards_exact_approval(self) -> None:
         endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"

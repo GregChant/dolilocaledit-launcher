@@ -20,8 +20,8 @@ from .approval import (
 )
 from .config import default_config_path, default_recovery_root, forget_editor_choice, load_config, trust_origin
 from .errors import LauncherError, ProtocolError
-from .installation import install_for_current_user, uninstall_for_current_user
-from .protocol import inspect_check_uri, inspect_launch_uri, parse_check_uri
+from .installation import cleanup_obsolete_windows_launchers, install_for_current_user, uninstall_for_current_user
+from .protocol import inspect_check_uri, inspect_launch_uri, parse_check_uri, protocol_operation
 from .registration import register_protocol
 from .session import EditingSessionRunner, PreparedSession
 
@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         arguments.insert(0, "open")
     parser = build_parser()
     options = parser.parse_args(arguments)
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        cleanup_obsolete_windows_launchers(Path(sys.executable))
     document_name: str | None = None
     server_origin: str | None = None
     launcher_check = False
@@ -81,18 +83,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(result)
             return 0
         if options.command == "install":
-            installed = install_for_current_user(options.source)
+            installed = install_for_current_user(options.source, __version__)
             if options.quiet:
-                print(installed)
+                print(installed.path)
             else:
-                show_installation_complete(installed, __version__)
+                show_installation_complete(
+                    installed.path,
+                    __version__,
+                    tuple(instance.pid for instance in installed.running_previous_instances),
+                    installed.retained_previous_files,
+                )
             return 0
         if options.command == "uninstall":
             removed = uninstall_for_current_user()
             _safe_print(f"Doli Local Edit désinstallé : {removed}")
             return 0
         if options.command == "open":
-            if options.uri.startswith("dolilocaledit://check?"):
+            if protocol_operation(options.uri) == "check":
                 launcher_check = True
                 config = load_config()
                 try:

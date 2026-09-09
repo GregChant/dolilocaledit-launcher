@@ -50,21 +50,47 @@ def confirm_external_template_change(target: str, scope: str) -> bool:
     return False
 
 
-def installation_success_message(path: Path, version: str) -> str:
+def installation_success_message(
+    path: Path,
+    version: str,
+    running_previous_pids: tuple[int, ...] = (),
+    retained_previous_files: tuple[Path, ...] = (),
+) -> str:
     """Build the explicit post-installation result shown to the current user."""
     safe_path = _safe_dialog_value(str(path), 512) or "emplacement local non déterminé"
     safe_version = version if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) else "non déterminée"
-    return (
+    message = (
         "Installation réussie\n\n"
         f"Version : {safe_version}\n"
         f"Emplacement : {safe_path}\n"
-        "Protocole dolilocaledit:// : enregistré pour votre compte.\n\n"
-        "Retournez dans Dolibarr et utilisez « Tester le lanceur » avant d’ouvrir le document."
+        "Protocole dolilocaledit:// : enregistré pour votre compte."
     )
+    safe_pids = tuple(pid for pid in running_previous_pids if isinstance(pid, int) and 0 < pid <= 4_294_967_295)[:20]
+    safe_files = tuple(
+        safe_name
+        for safe_name in (_safe_dialog_value(path.name, 160) for path in retained_previous_files[:10])
+        if safe_name
+    )
+    if safe_pids or safe_files:
+        message += "\n\nMise à niveau sans interruption :"
+        if safe_pids:
+            message += "\nAnciennes instances encore actives : PID " + ", ".join(str(pid) for pid in safe_pids) + "."
+        if safe_files:
+            message += "\nAnciens exécutables conservés temporairement : " + ", ".join(safe_files) + "."
+        message += (
+            "\nCes instances n’ont pas été fermées afin de protéger les documents en cours. "
+            "Les nouvelles ouvertures utilisent déjà cette version."
+        )
+    return message + "\n\nRetournez dans Dolibarr et utilisez « Tester le lanceur » avant d’ouvrir le document."
 
 
-def show_installation_complete(path: Path, version: str) -> None:
-    message = installation_success_message(path, version)
+def show_installation_complete(
+    path: Path,
+    version: str,
+    running_previous_pids: tuple[int, ...] = (),
+    retained_previous_files: tuple[Path, ...] = (),
+) -> None:
+    message = installation_success_message(path, version, running_previous_pids, retained_previous_files)
     if sys.platform == "win32":
         _windows_message(message, 0x00000040 | 0x00010000)
         return

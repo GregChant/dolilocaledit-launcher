@@ -7,12 +7,18 @@ from dolilocaledit_launcher.protocol import (
     inspect_launch_uri,
     normalize_origin,
     parse_check_uri,
+    protocol_operation,
     parse_launch_uri,
     validate_endpoint,
 )
 
 
 class ProtocolTest(unittest.TestCase):
+    def test_dispatches_browser_normalized_check_uri(self) -> None:
+        self.assertEqual(protocol_operation("dolilocaledit://check?redacted"), "check")
+        self.assertEqual(protocol_operation("dolilocaledit://check/?redacted"), "check")
+        self.assertEqual(protocol_operation("dolilocaledit://open/?redacted"), "open")
+
     def launch_uri(self, endpoint: str, **extra: str) -> str:
         query = {"endpoint": endpoint, "entity": "2", "ticket": "T" * 43, **extra}
         return "dolilocaledit://open?" + urlencode(query)
