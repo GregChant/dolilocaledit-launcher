@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dolilocaledit-launcher"
-version = "0.1.9"
+version = "0.1.10"
 description = "Minimal, editor-independent launcher for Doli Local Edit"
 readme = "README.md"
 requires-python = ">=3.10"

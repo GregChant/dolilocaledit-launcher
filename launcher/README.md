@@ -22,8 +22,9 @@ signé est destiné au développement, pas à un déploiement utilisateur.
 - le jeton Bearer passe au processus de travail par un tube anonyme, reste uniquement en mémoire
   et n'est jamais écrit dans le manifeste de reprise ;
 - les redirects HTTP sont refusés afin de ne jamais transférer le Bearer vers une autre URL ;
-- le téléchargement est limité à 1 Gio, contrôlé par taille, ETag et SHA-256, puis stocké avec
-  des permissions privées ;
+- le téléchargement est limité à 1 Gio puis contrôlé par sa taille finale et son SHA-256 ; les
+  en-têtes `Content-Length` et `ETag`, facultatifs avec une réponse HTTP `chunked`, sont aussi
+  vérifiés lorsqu'ils sont présents ; le fichier est ensuite stocké avec des permissions privées ;
 - une révision stable est copiée dans un instantané avant dépôt. `If-Match`, l'empreinte de base
   et la version de location sont envoyés au serveur ;
 - la copie locale est conservée en cas de coupure, conflit ou confirmation incomplète.
@@ -33,7 +34,7 @@ signé est destiné au développement, pas à un déploiement utilisateur.
 
 ## Développement
 
-Depuis la racine du dépôt :
+Depuis la racine du module :
 
 ```bash
 PYTHONPATH=launcher/src python3 -m unittest discover -s launcher/tests -v
@@ -155,11 +156,14 @@ installation par utilisateur sans boîte de confirmation.
 Une construction Linux produit le binaire et `install.sh`. Le script de livraison
 `scripts/package-launchers.py` les place dans une archive `tar.gz` qui préserve leurs bits
 d'exécution. L'utilisateur décompresse puis lance `install.sh`; aucune installation de Python
-n'est requise.
+n'est requise. Pour une livraison, `scripts/sign-linux-release.sh` produit une signature OpenPGP
+détachée de l'archive et de `SHA256SUMS`; la publication contient aussi la clé publique, jamais la
+clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 0.1.9 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
-et lancé dans la porte locale, mais sa signature détachée reste une condition avant la version
-stable. macOS doit encore être construit, testé, signé et notarié. Voir la
+lanceur Windows 0.1.10 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
+livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
+testé, signé et notarié. Voir la
 [présentation de la publication](../README.md).

@@ -9,3 +9,9 @@ Official Windows binaries must have a valid timestamped Authenticode signature i
 **Experts Conseils Chanton**. Compare downloaded files with the release `SHA256SUMS`; never trust
 an asset from another repository or an unversioned URL.
 
+Official Linux archives and `SHA256SUMS` have detached OpenPGP signatures. Verify the public key
+fingerprint through an independent channel before importing it; the expected fingerprint is:
+
+```text
+A51F BBAB 9A50 9277 1768  E839 8C95 07E9 997C 0569
+```

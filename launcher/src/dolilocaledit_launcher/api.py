@@ -20,6 +20,7 @@ from .protocol import validate_endpoint
 
 
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_SHA256_ETAG = re.compile(r'^(?:W/)?"([a-f0-9]{64})"$')
 _TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _MAX_JSON_BYTES = 1_048_576
 _MAX_DOCUMENT_BYTES = 1_073_741_824
@@ -94,9 +95,12 @@ class DoliLocalEditApi:
             with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 if (response.headers.get_content_type() or "").lower() != "application/octet-stream":
                     raise ApiError("download_mismatch", "Le type de réponse du document est invalide.")
-                length = _header_int(response.headers.get("Content-Length"))
-                etag = (response.headers.get("ETag") or "").strip('"')
-                if length != expected_size or not _SHA256.fullmatch(etag) or etag != expected_sha256:
+                length_header = response.headers.get("Content-Length")
+                etag_header = response.headers.get("ETag")
+                if (
+                    (length_header is not None and _header_int(length_header) != expected_size)
+                    or (etag_header is not None and _header_etag_sha256(etag_header) != expected_sha256)
+                ):
                     raise ApiError("download_mismatch", "Les métadonnées du document sont incohérentes.")
                 digest = hashlib.sha256()
                 written = 0
@@ -341,6 +345,11 @@ def _positive_or_zero(payload: dict[str, Any], name: str) -> int:
 
 def _header_int(value: str | None) -> int | None:
     return int(value) if value is not None and value.isascii() and value.isdigit() else None
+
+
+def _header_etag_sha256(value: str) -> str | None:
+    match = _SHA256_ETAG.fullmatch(value.strip())
+    return match.group(1) if match is not None else None
 
 
 def _apply_windows_mark_of_the_web(path: Path, endpoint: str) -> None:

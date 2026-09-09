@@ -15,6 +15,7 @@ from dolilocaledit_launcher.errors import ApiError, ExternalTemplateApprovalRequ
 
 
 class ApiHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     original = b"original\n"
     uploaded = b""
     authorization = ""
@@ -22,6 +23,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     redirect_reached = False
     request_template_approval = False
     template_approval = ""
+    include_download_length = True
+    download_etag_mode = "strong"
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -67,10 +70,22 @@ class ApiHandler(BaseHTTPRequestHandler):
         digest = hashlib.sha256(self.original).hexdigest()
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Length", str(len(self.original)))
-        self.send_header("ETag", f'"{digest}"')
+        if self.include_download_length:
+            self.send_header("Content-Length", str(len(self.original)))
+        else:
+            self.send_header("Transfer-Encoding", "chunked")
+        if self.download_etag_mode == "strong":
+            self.send_header("ETag", f'"{digest}"')
+        elif self.download_etag_mode == "weak":
+            self.send_header("ETag", f'W/"{digest}"')
+        elif self.download_etag_mode == "wrong":
+            self.send_header("ETag", '"' + "0" * 64 + '"')
         self.end_headers()
-        self.wfile.write(self.original)
+        if self.include_download_length:
+            self.wfile.write(self.original)
+        else:
+            self.wfile.write(f"{len(self.original):X}\r\n".encode("ascii"))
+            self.wfile.write(self.original + b"\r\n0\r\n\r\n")
 
     def do_PUT(self) -> None:
         self.__class__.authorization = self.headers.get("Authorization", "")
@@ -150,6 +165,49 @@ class ApiTest(unittest.TestCase):
             self.assertEqual(ApiHandler.template_approval, "b" * 64)
         finally:
             ApiHandler.request_template_approval = False
+
+    def test_download_accepts_chunked_response_without_advisory_metadata(self) -> None:
+        endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
+        api = DoliLocalEditApi(endpoint, 1, 5)
+        digest = hashlib.sha256(ApiHandler.original).hexdigest()
+        ApiHandler.include_download_length = False
+        ApiHandler.download_etag_mode = "missing"
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                document = Path(temporary) / "download"
+                api.download("A" * 43, document, digest, len(ApiHandler.original))
+                self.assertEqual(document.read_bytes(), ApiHandler.original)
+        finally:
+            ApiHandler.include_download_length = True
+            ApiHandler.download_etag_mode = "strong"
+
+    def test_download_accepts_weak_etag_after_exact_content_verification(self) -> None:
+        endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
+        api = DoliLocalEditApi(endpoint, 1, 5)
+        digest = hashlib.sha256(ApiHandler.original).hexdigest()
+        ApiHandler.download_etag_mode = "weak"
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                document = Path(temporary) / "download"
+                api.download("A" * 43, document, digest, len(ApiHandler.original))
+                self.assertEqual(document.read_bytes(), ApiHandler.original)
+        finally:
+            ApiHandler.download_etag_mode = "strong"
+
+    def test_download_still_rejects_a_conflicting_etag(self) -> None:
+        endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
+        api = DoliLocalEditApi(endpoint, 1, 5)
+        digest = hashlib.sha256(ApiHandler.original).hexdigest()
+        ApiHandler.download_etag_mode = "wrong"
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                document = Path(temporary) / "download"
+                with self.assertRaises(ApiError) as context:
+                    api.download("A" * 43, document, digest, len(ApiHandler.original))
+                self.assertEqual(context.exception.code, "download_mismatch")
+                self.assertFalse(document.exists())
+        finally:
+            ApiHandler.download_etag_mode = "strong"
 
     def test_refuses_redirect_instead_of_forwarding_bearer(self) -> None:
         endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
