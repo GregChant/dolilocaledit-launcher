@@ -22,6 +22,39 @@ class BrokenStream:
 
 
 class CliTest(unittest.TestCase):
+    def test_launcher_check_reports_version_and_platform_without_opening_document(self) -> None:
+        config = MagicMock()
+        config.trusted_origins = ("https://erp.example",)
+        config.api_timeout_seconds = 10
+        target = LaunchTarget(
+            "https://erp.example/custom/dolilocaledit/public/api.php",
+            "https://erp.example",
+            1,
+            "T" * 43,
+        )
+        api = MagicMock()
+        with (
+            patch("dolilocaledit_launcher.cli.load_config", return_value=config),
+            patch("dolilocaledit_launcher.cli.parse_check_uri", return_value=target),
+            patch("dolilocaledit_launcher.cli.DoliLocalEditApi", return_value=api),
+            patch("dolilocaledit_launcher.cli.sys.platform", "linux"),
+        ):
+            with redirect_stdout(StringIO()):
+                result = main(["open", "dolilocaledit://check?redacted"])
+        self.assertEqual(result, 0)
+        api.confirm_launcher_check.assert_called_once_with("T" * 43, "1.0.2", "linux")
+
+    def test_installation_failure_is_shown_explicitly(self) -> None:
+        error = ApiError("installation_failed", "La copie du lanceur a échoué.")
+        with (
+            patch("dolilocaledit_launcher.cli.install_for_current_user", side_effect=error),
+            patch("dolilocaledit_launcher.cli.show_installation_error") as show_error,
+        ):
+            with redirect_stderr(StringIO()):
+                result = main(["install"])
+        self.assertEqual(result, 2)
+        show_error.assert_called_once_with("installation_failed", "La copie du lanceur a échoué.")
+
     def test_first_open_requires_explicit_origin_approval(self) -> None:
         runner = MagicMock()
         runner.prepare.side_effect = ProtocolError("untrusted_origin", "approval required")

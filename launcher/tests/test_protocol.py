@@ -2,7 +2,14 @@ import unittest
 from urllib.parse import urlencode
 
 from dolilocaledit_launcher.errors import ProtocolError
-from dolilocaledit_launcher.protocol import inspect_launch_uri, normalize_origin, parse_launch_uri, validate_endpoint
+from dolilocaledit_launcher.protocol import (
+    inspect_check_uri,
+    inspect_launch_uri,
+    normalize_origin,
+    parse_check_uri,
+    parse_launch_uri,
+    validate_endpoint,
+)
 
 
 class ProtocolTest(unittest.TestCase):
@@ -25,6 +32,19 @@ class ProtocolTest(unittest.TestCase):
         with self.assertRaises(ProtocolError) as context:
             parse_launch_uri(uri, ())
         self.assertEqual(context.exception.code, "untrusted_origin")
+
+    def test_launcher_check_uses_a_distinct_strict_operation(self) -> None:
+        uri = self.launch_uri("https://erp.example/custom/dolilocaledit/public/api.php").replace(
+            "dolilocaledit://open?", "dolilocaledit://check?"
+        )
+        inspected = inspect_check_uri(uri)
+        self.assertEqual(inspected.origin, "https://erp.example")
+        checked = parse_check_uri(uri, ("https://erp.example",))
+        self.assertEqual(checked.ticket, "T" * 43)
+        with self.assertRaises(ProtocolError):
+            inspect_launch_uri(uri)
+        with self.assertRaises(ProtocolError):
+            inspect_check_uri(uri.replace("check", "unknown", 1))
 
     def test_accepts_http_only_on_loopback_and_when_trusted(self) -> None:
         target = parse_launch_uri(

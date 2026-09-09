@@ -50,18 +50,68 @@ def confirm_external_template_change(target: str, scope: str) -> bool:
     return False
 
 
-def show_installation_complete(path: Path) -> None:
-    message = (
-        "Doli Local Edit est installé pour votre compte.\n\n"
-        "Retournez dans Dolibarr et cliquez sur « Modifier localement ».\n"
-        "Le serveur vous demandera une confirmation lors de la première ouverture."
+def installation_success_message(path: Path, version: str) -> str:
+    """Build the explicit post-installation result shown to the current user."""
+    safe_path = _safe_dialog_value(str(path), 512) or "emplacement local non déterminé"
+    safe_version = version if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) else "non déterminée"
+    return (
+        "Installation réussie\n\n"
+        f"Version : {safe_version}\n"
+        f"Emplacement : {safe_path}\n"
+        "Protocole dolilocaledit:// : enregistré pour votre compte.\n\n"
+        "Retournez dans Dolibarr et utilisez « Tester le lanceur » avant d’ouvrir le document."
     )
+
+
+def show_installation_complete(path: Path, version: str) -> None:
+    message = installation_success_message(path, version)
     if sys.platform == "win32":
-        _windows_message(message, 0x00000040)
+        _windows_message(message, 0x00000040 | 0x00010000)
         return
     if sys.platform.startswith("linux") and _linux_message(message, "info"):
         return
     print(f"Doli Local Edit installé dans {path}")
+
+
+def installation_error_message(code: str, message: str) -> str:
+    """Build an actionable and credential-free installation failure."""
+    safe_code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "installation_error"
+    safe_message = _safe_dialog_value(message, 512) or "Une erreur locale non précisée s’est produite."
+    return (
+        "Échec de l’installation de Doli Local Edit\n\n"
+        f"Problème : {safe_message}\n"
+        "Le protocole dolilocaledit:// n’a pas été confirmé.\n\n"
+        "Action conseillée : fermez toute ancienne instance du lanceur, vérifiez les permissions "
+        "de votre profil puis relancez l’installateur.\n"
+        f"Code de diagnostic : {safe_code}"
+    )
+
+
+def show_installation_error(code: str, message: str) -> None:
+    """Show an explicit installation failure on supported desktop systems."""
+    content = installation_error_message(code, message)
+    if sys.platform == "win32":
+        _windows_message(content, 0x00000010 | 0x00010000)
+    elif sys.platform.startswith("linux") and _linux_message(content, "error"):
+        return
+    else:
+        print(content, file=sys.stderr)
+
+
+def show_launcher_check_error(code: str, message: str) -> None:
+    """Explain why a Dolibarr-to-launcher capability check failed locally."""
+    safe_code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "launcher_check_error"
+    safe_message = _safe_dialog_value(message, 512) or "Le lanceur n’a pas pu répondre à Dolibarr."
+    content = (
+        "Le test du lanceur a échoué.\n\n"
+        f"Problème : {safe_message}\n"
+        "Retournez dans Dolibarr, réinstallez le lanceur si nécessaire, puis relancez le test.\n"
+        f"Code de diagnostic : {safe_code}"
+    )
+    if sys.platform == "win32":
+        _windows_message(content, 0x00000010 | 0x00010000)
+    elif sys.platform.startswith("linux"):
+        _linux_message(content, "error")
 
 
 def show_launcher_error(

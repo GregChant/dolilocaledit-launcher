@@ -77,7 +77,15 @@ def install_for_current_user(source: Path | None = None) -> Path:
             os.chmod(target, 0o700)
         except OSError as exc:
             raise ConfigurationError("installation_failed", "Les permissions du lanceur sont invalides.") from exc
-    register_protocol(target)
+    try:
+        register_protocol(target)
+    except ConfigurationError:
+        raise
+    except OSError as exc:
+        raise ConfigurationError(
+            "registration_failed",
+            "L’enregistrement du protocole a échoué.",
+        ) from exc
     return target
 
 

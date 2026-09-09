@@ -1,11 +1,27 @@
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 from dolilocaledit_launcher import approval
-from dolilocaledit_launcher.approval import confirm_external_template_change, launcher_error_message
+from dolilocaledit_launcher.approval import (
+    confirm_external_template_change,
+    installation_error_message,
+    installation_success_message,
+    launcher_error_message,
+)
 
 
 class ApprovalTest(unittest.TestCase):
+    def test_installation_result_messages_are_explicit(self) -> None:
+        success = installation_success_message(Path(r"C:\Program Files\DoliLocalEdit\launcher.exe"), "1.0.2")
+        self.assertIn("Installation réussie", success)
+        self.assertIn("Version : 1.0.2", success)
+        self.assertIn("dolilocaledit:// : enregistré", success)
+        failure = installation_error_message("installation_failed", "Copie impossible\nréessayez")
+        self.assertIn("Échec de l’installation", failure)
+        self.assertIn("Code de diagnostic : installation_failed", failure)
+        self.assertNotIn("impossible\nréessayez", failure)
+
     def test_changed_template_prompt_shows_sanitized_exact_target(self) -> None:
         messages: list[str] = []
         with patch.object(approval.sys, "platform", "win32"), patch.object(

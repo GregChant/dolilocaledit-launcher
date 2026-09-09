@@ -55,6 +55,15 @@ def normalize_origin(value: str) -> str:
 
 def inspect_launch_uri(uri: str) -> LaunchTarget:
     """Validate a launch URI without deciding whether its origin is trusted."""
+    return _inspect_protocol_uri(uri, "open")
+
+
+def inspect_check_uri(uri: str) -> LaunchTarget:
+    """Validate a launcher capability-check URI without trusting its origin."""
+    return _inspect_protocol_uri(uri, "check")
+
+
+def _inspect_protocol_uri(uri: str, operation: str) -> LaunchTarget:
     if not isinstance(uri, str) or len(uri) > 4096:
         raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.")
     try:
@@ -63,7 +72,7 @@ def inspect_launch_uri(uri: str) -> LaunchTarget:
         raise ProtocolError("invalid_uri", "Le lien de lancement est invalide.") from exc
     if (
         parsed.scheme != "dolilocaledit"
-        or parsed.netloc != "open"
+        or parsed.netloc != operation
         or parsed.path not in {"", "/"}
         or parsed.fragment
         or parsed.username is not None
@@ -90,6 +99,18 @@ def inspect_launch_uri(uri: str) -> LaunchTarget:
 def parse_launch_uri(uri: str, trusted_origins: tuple[str, ...]) -> LaunchTarget:
     """Parse a launch URI without ever logging or persisting its ticket."""
     target = inspect_launch_uri(uri)
+    normalized_trust = tuple(normalize_origin(item) for item in trusted_origins)
+    if target.origin not in normalized_trust:
+        raise ProtocolError(
+            "untrusted_origin",
+            "Ce serveur Dolibarr n’est pas dans la liste locale des origines approuvées.",
+        )
+    return target
+
+
+def parse_check_uri(uri: str, trusted_origins: tuple[str, ...]) -> LaunchTarget:
+    """Parse a capability-check URI without persisting its short ticket."""
+    target = inspect_check_uri(uri)
     normalized_trust = tuple(normalize_origin(item) for item in trusted_origins)
     if target.origin not in normalized_trust:
         raise ProtocolError(

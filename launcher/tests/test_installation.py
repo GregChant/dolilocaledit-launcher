@@ -82,6 +82,21 @@ class InstallationTest(unittest.TestCase):
                     install_for_current_user(source)
             self.assertEqual(context.exception.code, "installation_failed")
 
+    def test_install_converts_a_system_registration_failure_to_a_visible_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "launcher.exe"
+            source.write_bytes(b"launcher")
+            target = root / "installed" / "launcher.exe"
+            with (
+                patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
+                patch("dolilocaledit_launcher.installation.default_windows_install_path", return_value=target),
+                patch("dolilocaledit_launcher.installation.register_protocol", side_effect=PermissionError("denied")),
+            ):
+                with self.assertRaises(ConfigurationError) as context:
+                    install_for_current_user(source)
+            self.assertEqual(context.exception.code, "registration_failed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,6 +85,27 @@ class DoliLocalEditApi:
             raise ApiError("invalid_response", "Les limites annoncées par Dolibarr sont invalides.")
         return result
 
+    def confirm_launcher_check(self, ticket: str, launcher_version: str, platform: str) -> None:
+        """Prove that the registered local protocol handler reached Dolibarr."""
+        if not _TOKEN.fullmatch(ticket):
+            raise ApiError("invalid_credential", "Le test du lanceur est invalide.")
+        if not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})", launcher_version):
+            raise ApiError("invalid_launcher_version", "La version du lanceur est invalide.")
+        if platform not in {"windows", "linux"}:
+            raise ApiError("invalid_launcher_platform", "La plateforme du lanceur est invalide.")
+        payload = self._request_json(
+            "POST",
+            "launcher_check",
+            {
+                "entity": self.entity,
+                "ticket": ticket,
+                "launcher_version": launcher_version,
+                "platform": platform,
+            },
+        )
+        if payload.get("status") != "confirmed":
+            raise ApiError("invalid_response", "Dolibarr n’a pas confirmé le test du lanceur.")
+
     def download(self, access_token: str, destination: Path, expected_sha256: str, expected_size: int) -> None:
         request = Request(
             self._action_url("content"),

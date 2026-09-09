@@ -10,11 +10,18 @@ import subprocess
 import sys
 
 from .api import DoliLocalEditApi
-from .approval import confirm_origin_trust, show_installation_complete, show_launcher_error
+from . import __version__
+from .approval import (
+    confirm_origin_trust,
+    show_installation_complete,
+    show_installation_error,
+    show_launcher_check_error,
+    show_launcher_error,
+)
 from .config import default_config_path, default_recovery_root, forget_editor_choice, load_config, trust_origin
 from .errors import LauncherError, ProtocolError
 from .installation import install_for_current_user, uninstall_for_current_user
-from .protocol import inspect_launch_uri
+from .protocol import inspect_check_uri, inspect_launch_uri, parse_check_uri
 from .registration import register_protocol
 from .session import EditingSessionRunner, PreparedSession
 
@@ -50,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     options = parser.parse_args(arguments)
     document_name: str | None = None
     server_origin: str | None = None
+    launcher_check = False
     try:
         if options.command == "config-path":
             print(default_config_path())
@@ -77,13 +85,35 @@ def main(argv: list[str] | None = None) -> int:
             if options.quiet:
                 print(installed)
             else:
-                show_installation_complete(installed)
+                show_installation_complete(installed, __version__)
             return 0
         if options.command == "uninstall":
             removed = uninstall_for_current_user()
             _safe_print(f"Doli Local Edit désinstallé : {removed}")
             return 0
         if options.command == "open":
+            if options.uri.startswith("dolilocaledit://check?"):
+                launcher_check = True
+                config = load_config()
+                try:
+                    target = parse_check_uri(options.uri, config.trusted_origins)
+                except ProtocolError as exc:
+                    if exc.code != "untrusted_origin":
+                        raise
+                    target = inspect_check_uri(options.uri)
+                    if not confirm_origin_trust(target.origin):
+                        raise
+                    trust_origin(target.origin)
+                    config = load_config()
+                    target = parse_check_uri(options.uri, config.trusted_origins)
+                platform_name = "windows" if sys.platform == "win32" else "linux"
+                DoliLocalEditApi(target.endpoint, target.entity, config.api_timeout_seconds).confirm_launcher_check(
+                    target.ticket,
+                    __version__,
+                    platform_name,
+                )
+                _safe_print("Test du lanceur confirmé.")
+                return 0
             config = load_config()
             runner = EditingSessionRunner(config)
             try:
@@ -129,10 +159,15 @@ def main(argv: list[str] | None = None) -> int:
             _safe_print(f"Session {result.status}: {result.filename}")
             return 0
     except LauncherError as exc:
+        if options.command == "install" and not getattr(options, "quiet", False):
+            show_installation_error(exc.code, str(exc))
+        elif launcher_check and (sys.platform == "win32" or sys.platform.startswith("linux")):
+            show_launcher_check_error(exc.code, str(exc))
         if (
             (sys.platform == "win32" or sys.platform.startswith("linux"))
             and getattr(sys, "frozen", False)
             and options.command in {"open", "_worker"}
+            and not launcher_check
         ):
             if exc.code != "editor_selection_cancelled":
                 details = {}
