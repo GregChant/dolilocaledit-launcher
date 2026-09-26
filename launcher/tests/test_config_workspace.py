@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from dolilocaledit_launcher.config import forget_editor_choice, load_config, remember_editor_choice, trust_origin
 from dolilocaledit_launcher.errors import ConfigurationError
@@ -97,6 +98,38 @@ class ConfigWorkspaceTest(unittest.TestCase):
     def test_safe_filename_never_keeps_path_components(self) -> None:
         self.assertEqual(safe_local_filename("../../report.docx"), "document.docx")
         self.assertEqual(safe_local_filename("report.txt"), "report.txt")
+
+    def test_safe_filename_avoids_windows_devices_even_with_extensions(self) -> None:
+        for filename in ("CON.txt", "nul.docx", "AUX.xlsx", "COM1.pdf", "LPT9.txt", "COM¹.txt", "CON .txt"):
+            with self.subTest(filename=filename):
+                self.assertTrue(safe_local_filename(filename).startswith("document."))
+        self.assertEqual(safe_local_filename("COM10.txt"), "COM10.txt")
+        self.assertEqual(safe_local_filename("CONTRACT.docx"), "CONTRACT.docx")
+
+    def test_download_cannot_overwrite_its_recovery_manifest(self) -> None:
+        for filename in ("recovery.json", "Recovery.JSON", "recovery.tmp"):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+                workspace = RecoveryWorkspace.create(Path(temporary), filename, "https://erp.example", 1, "uuid")
+                download = workspace.download_path()
+                download.write_bytes(b"downloaded document")
+                workspace.finish_download(download, file_sha256(download))
+                self.assertEqual(workspace.document.read_bytes(), b"downloaded document")
+                manifest = json.loads(workspace.manifest.read_text(encoding="utf-8"))
+                self.assertEqual(manifest["status"], "editing")
+                self.assertEqual(manifest["filename"], workspace.document.name)
+
+    def test_snapshot_retries_when_the_editor_removes_the_source_during_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = RecoveryWorkspace.create(Path(temporary), "sample.txt", "https://erp.example", 1, "uuid")
+            workspace.document.write_bytes(b"save in progress")
+            with patch("dolilocaledit_launcher.workspace.os.fsync", side_effect=lambda _fd: workspace.document.unlink()):
+                self.assertIsNone(workspace.stable_snapshot())
+            self.assertFalse((workspace.directory / ".upload").exists())
+            self.assertIsNone(workspace.stable_snapshot())
+            workspace.document.write_bytes(b"complete replacement")
+            snapshot, digest = workspace.stable_snapshot()
+            self.assertEqual(snapshot.read_bytes(), b"complete replacement")
+            self.assertEqual(digest, file_sha256(workspace.document))
 
     def test_abrupt_launcher_exit_leaves_a_readable_secret_free_recovery(self) -> None:
         code = """

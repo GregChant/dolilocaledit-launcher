@@ -25,6 +25,8 @@ class ApiHandler(BaseHTTPRequestHandler):
     template_approval = ""
     include_download_length = True
     download_etag_mode = "strong"
+    interrupt_chunked_download = False
+    interrupt_chunked_json = False
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -91,6 +93,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         elif self.download_etag_mode == "wrong":
             self.send_header("ETag", '"' + "0" * 64 + '"')
         self.end_headers()
+        if self.interrupt_chunked_download:
+            self.wfile.write(f"{len(self.original):X}\r\n".encode("ascii"))
+            self.wfile.write(self.original[:3])
+            self.close_connection = True
+            return
         if self.include_download_length:
             self.wfile.write(self.original)
         else:
@@ -123,6 +130,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if self.interrupt_chunked_json:
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(f"{len(body):X}\r\n".encode("ascii"))
+            self.wfile.write(body[:3])
+            self.close_connection = True
+            return
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -209,6 +223,28 @@ class ApiTest(unittest.TestCase):
                 self.assertEqual(document.read_bytes(), ApiHandler.original)
         finally:
             ApiHandler.download_etag_mode = "strong"
+
+    def test_interrupted_chunked_download_has_a_visible_error_and_removes_partial_file(self) -> None:
+        endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
+        api = DoliLocalEditApi(endpoint, 1, 5)
+        digest = hashlib.sha256(ApiHandler.original).hexdigest()
+        with (
+            patch.object(ApiHandler, "include_download_length", False),
+            patch.object(ApiHandler, "interrupt_chunked_download", True),
+            tempfile.TemporaryDirectory() as temporary,
+        ):
+            document = Path(temporary) / "download"
+            with self.assertRaises(ApiError) as context:
+                api.download("A" * 43, document, digest, len(ApiHandler.original))
+            self.assertEqual(context.exception.code, "download_failed")
+            self.assertFalse(document.exists())
+
+    def test_interrupted_chunked_confirmation_has_a_recoverable_api_error(self) -> None:
+        endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"
+        with patch.object(ApiHandler, "interrupt_chunked_json", True):
+            with self.assertRaises(ApiError) as context:
+                DoliLocalEditApi(endpoint, 1, 5).complete("A" * 43, 1, "a" * 64)
+        self.assertEqual(context.exception.code, "api_failed")
 
     def test_download_still_rejects_a_conflicting_etag(self) -> None:
         endpoint = f"http://127.0.0.1:{self.server.server_port}/custom/dolilocaledit/public/api.php"

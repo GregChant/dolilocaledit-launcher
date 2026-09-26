@@ -10,8 +10,8 @@ commande.
 Le lanceur utilise uniquement la bibliothèque standard Python. Les sources restent testables
 avec Python 3.10 ou plus récent ; les exécutables publiables sont construits exclusivement avec
 Python 3.14.7 et PyInstaller 6.22.2 dans les environnements isolés et verrouillés décrits dans
-[le README du dépôt](../README.md). La signature reste une porte de livraison : un exécutable non
-signé est destiné au développement, pas à un déploiement utilisateur.
+[le README du dépôt](../README.md). La signature reste une porte de livraison : un exécutable non signé est destiné
+au développement, pas à un déploiement utilisateur.
 
 ## Garanties du lanceur
 
@@ -109,9 +109,13 @@ est traité comme une association dont la fermeture n'est pas observable. Le lan
 la première sauvegarde stable et conserve la copie de travail par prudence.
 
 Une session dont la durée maximale est atteinte sans changement enregistré sur disque est
-annulée sans boîte d'erreur. Le lanceur supprime sa copie locale lorsqu'elle n'est plus ouverte ;
-si Windows empêche ce nettoyage, le manifeste prend l'état `expired_unchanged` et doit être
-vérifié avant suppression, car l'éditeur peut encore enregistrer le fichier après l'échéance.
+annulée sans boîte d'erreur. Le lanceur conserve la copie et le manifeste `expired_unchanged`
+si l'éditeur est encore ouvert ou si sa fermeture n'est pas observable, sur tous les systèmes.
+Cette reprise doit être vérifiée avant suppression, car l'éditeur peut encore enregistrer le
+fichier après l'échéance. La même conservation s'applique à une interruption réseau même lorsque
+le document n'a pas encore changé sur disque. Un éditeur qui remplace son fichier lors de
+l'enregistrement dispose d'un délai de 30 secondes pour recréer le document ; les heartbeats
+restent actifs pendant ce délai.
 
 Sans association explicite, le lanceur ouvre l'application système. Comme certains systèmes ne
 permettent pas d'observer de façon fiable la fermeture de cette application, la première
@@ -168,13 +172,15 @@ de document.
 Une construction Linux produit le binaire et `install.sh`. Le script de livraison
 `scripts/package-launchers.py` les place dans une archive `tar.gz` qui préserve leurs bits
 d'exécution. L'utilisateur décompresse puis lance `install.sh`; aucune installation de Python
-n'est requise. Pour une livraison, `scripts/sign-linux-release.sh` produit une signature OpenPGP
+n'est requise. Réexécuter l'installateur remplace atomiquement la version Linux précédente tout
+en laissant les sessions déjà ouvertes utiliser leur ancien exécutable. Pour une livraison,
+`scripts/sign-linux-release.sh` produit une signature OpenPGP
 détachée de l'archive et de `SHA256SUMS`; la publication contient aussi la clé publique, jamais la
 clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 1.0.3 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.0.4 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la

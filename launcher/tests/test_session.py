@@ -284,7 +284,7 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(result.status, "completed_recovery")
             self.assertEqual(saved, [(".txt", None)])
 
-    def test_unchanged_untracked_session_expires_without_an_error_or_recovery(self) -> None:
+    def test_unchanged_untracked_session_expires_but_keeps_the_open_document(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "recovery"
             api = FakeApi()
@@ -307,7 +307,85 @@ class SessionTest(unittest.TestCase):
             self.assertEqual(result.status, "expired_unchanged")
             self.assertEqual(result.filename, "sample.txt")
             self.assertEqual(api.events, ["exchange", "download", "cancel"])
-            self.assertEqual(list(root.iterdir()), [])
+            recovery = next(root.iterdir())
+            document = recovery / "sample.txt"
+            self.assertEqual(document.read_bytes(), api.original)
+            manifest = json.loads((recovery / "recovery.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["status"], "expired_unchanged")
+            self.assertTrue(manifest["editor_may_be_open"])
+            # A system-associated editor can still save after the worker exits.
+            document.write_bytes(b"saved after the session expired\n")
+            self.assertEqual(document.read_bytes(), b"saved after the session expired\n")
+
+    def test_heartbeat_failure_keeps_unchanged_document_in_a_running_tracked_editor(self) -> None:
+        class RunningProcess:
+            def poll(self) -> None:
+                return None
+
+        class OfflineApi(FakeApi):
+            def heartbeat(self, token: str, lease_version: int) -> tuple[int, str]:
+                raise ApiError("network", "failure")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "recovery"
+            api = OfflineApi()
+            clock = FakeClock()
+            runner = self.runner(root, api, clock)
+            runner.editor_opener = lambda _document, _command: EditorHandle(RunningProcess(), True)
+            with self.assertRaises(ApiError) as context:
+                runner.run(launch_uri())
+            error = context.exception
+            self.assertFalse(error.local_changes)
+            self.assertTrue(error.server_cancelled)
+            self.assertIsNotNone(error.recovery_directory)
+            recovery = Path(error.recovery_directory)
+            self.assertEqual((recovery / "sample.txt").read_bytes(), api.original)
+
+    def test_save_that_temporarily_removes_the_file_is_published_after_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "recovery"
+            api = FakeApi()
+            clock = FakeClock()
+            runner = self.runner(root, api, clock)
+            documents: list[Path] = []
+
+            def editor(document: Path, _command: tuple[str, ...] | None) -> EditorHandle:
+                documents.append(document)
+                document.unlink()
+                return EditorHandle(None, False)
+
+            def save_after_gap(seconds: float) -> None:
+                clock.sleep(seconds)
+                if clock.value >= 1 and not documents[0].exists():
+                    documents[0].write_bytes(b"saved replacement\n")
+
+            runner.editor_opener = editor
+            runner.sleep = save_after_gap
+            result = runner.run(launch_uri())
+            self.assertEqual(result.status, "completed_recovery")
+            self.assertEqual(api.events, ["exchange", "download", "upload", "complete"])
+            self.assertEqual(documents[0].read_bytes(), b"saved replacement\n")
+
+    def test_permanently_missing_document_stops_after_a_bounded_grace_period(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "recovery"
+            api = FakeApi()
+            clock = FakeClock()
+            runner = self.runner(root, api, clock)
+
+            def editor(document: Path, _command: tuple[str, ...] | None) -> EditorHandle:
+                document.rename(document.with_suffix(".backup"))
+                return EditorHandle(FinishedProcess(), True)
+
+            runner.editor_opener = editor
+            with self.assertRaises(LauncherError) as context:
+                runner.run(launch_uri())
+            self.assertEqual(context.exception.code, "local_io_failed")
+            self.assertGreaterEqual(clock.value, 30)
+            self.assertLess(clock.value, 31)
+            self.assertIn("heartbeat", api.events)
+            self.assertEqual(api.events[-1], "cancel")
+            self.assertEqual((next(root.iterdir()) / "sample.backup").read_bytes(), api.original)
 
     def test_timeout_with_saved_changes_keeps_recovery_and_error_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -147,7 +148,7 @@ class DoliLocalEditApi:
         except ApiError:
             _safe_unlink(destination)
             raise
-        except (HTTPError, URLError, OSError) as exc:
+        except (HTTPError, URLError, OSError, HTTPException) as exc:
             _safe_unlink(destination)
             translated = self._translate_transport(exc, "download_failed", "Le téléchargement a échoué.")
             if isinstance(exc, HTTPError):
@@ -255,7 +256,7 @@ class DoliLocalEditApi:
                     raise ApiError("invalid_response", "La réponse Dolibarr est trop volumineuse.")
         except ApiError:
             raise
-        except (HTTPError, URLError, OSError) as exc:
+        except (HTTPError, URLError, OSError, HTTPException) as exc:
             challenge = self._external_template_challenge(exc)
             translated = self._translate_transport(exc, "api_failed", "Dolibarr a refusé ou interrompu la requête.")
             if isinstance(exc, HTTPError):
@@ -288,7 +289,7 @@ class DoliLocalEditApi:
             if len(raw) > _MAX_JSON_BYTES:
                 return None
             payload = json.loads(raw.decode("utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, HTTPException, UnicodeDecodeError, json.JSONDecodeError):
             return None
         if not isinstance(payload, dict) or payload.get("error") != "external_template_changed":
             return None

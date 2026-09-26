@@ -72,6 +72,42 @@ class InstallationTest(unittest.TestCase):
             self.assertFalse(target.exists())
             unregister.assert_called_once_with()
 
+    def test_linux_upgrade_atomically_replaces_the_installed_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "downloaded-launcher"
+            source.write_bytes(b"new-launcher")
+            target = root / "installed-launcher"
+            target.write_bytes(b"running-launcher")
+            with (
+                target.open("rb") as running_binary,
+                patch("dolilocaledit_launcher.installation.sys.platform", "linux"),
+                patch("dolilocaledit_launcher.installation.default_linux_install_path", return_value=target),
+                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+            ):
+                installed = install_for_current_user(source, "1.0.3")
+                self.assertEqual(running_binary.read(), b"running-launcher")
+            self.assertEqual(installed.path.read_bytes(), b"new-launcher")
+            register.assert_called_once_with(target)
+
+    def test_windows_reinstall_rejects_changed_immutable_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "downloaded-launcher.exe"
+            source.write_bytes(b"new-launcher")
+            target = root / "installed-launcher.exe"
+            target.write_bytes(b"unexpected-launcher")
+            with (
+                patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
+                patch("dolilocaledit_launcher.installation.default_windows_install_path", return_value=target),
+                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+            ):
+                with self.assertRaises(ConfigurationError) as context:
+                    install_for_current_user(source, "1.0.3")
+            self.assertEqual(context.exception.code, "installation_target_invalid")
+            self.assertEqual(target.read_bytes(), b"unexpected-launcher")
+            register.assert_not_called()
+
     def test_integrated_install_refuses_unsupported_platform(self) -> None:
         with patch("dolilocaledit_launcher.installation.sys.platform", "darwin"):
             with self.assertRaises(ConfigurationError) as context:

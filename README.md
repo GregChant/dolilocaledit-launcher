@@ -15,7 +15,7 @@ Use the [versioned GitHub releases](https://github.com/GregChant/dolilocaledit-l
 - Windows x86-64: `DoliLocalEdit-Setup-<version>.exe`;
 - Linux x86-64: `DoliLocalEdit-linux-x86_64-<version>.tar.gz`.
 
-The current stable release is **1.0.3**. On Windows, run the signed setup executable; it installs
+The current stable release is **1.0.4**. On Windows, run the signed setup executable; it installs
 the launcher for the current user without administrator rights. On Linux, extract the archive and
 run `install.sh`; it installs under `~/.local` without administrator rights.
 
@@ -26,8 +26,15 @@ downloading or opening a document.
 Windows upgrades are installed side by side under an immutable version-and-SHA-256 filename. The
 protocol registration switches to the new file immediately, while an older process is never
 terminated and may finish protecting its current editing session. Retained files are cleaned on
-a later launch once Windows releases them. Version 1.0.3 also accepts both browser forms
+a later launch once Windows releases them. The launcher also accepts both browser forms
 `dolilocaledit://check?…` and `dolilocaledit://check/?…`.
+
+Version 1.0.4 preserves recovery copies whenever an editor is still running or its closure cannot
+be observed, including after an unchanged session expires or a network failure. Editors that
+replace their working file receive a 30-second grace period while heartbeats continue. Linux
+upgrades replace the executable atomically so existing editing sessions can keep running.
+Protocol workers use independent PyInstaller instances to avoid temporary-directory cleanup
+races.
 
 The Windows executable is Authenticode-signed and timestamped by **Experts Conseils Chanton**.
 Verify the Digital Signatures tab before installation. Linux releases include the archive's
@@ -67,5 +74,5 @@ More operational details are in [launcher/README.md](launcher/README.md).
 
 Copyright (C) 2026 Experts Conseils Chanton.
 
-The launcher source and published binaries are licensed under GPL-3.0-or-later. The signing key,
+The launcher source and published binaries are licensed under [GPL-3.0-or-later](COPYING). The signing key,
 publisher identity and trademarks are not granted by that license.

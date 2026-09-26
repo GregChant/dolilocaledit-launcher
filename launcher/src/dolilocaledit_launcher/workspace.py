@@ -65,7 +65,10 @@ class RecoveryWorkspace:
 
     def stable_snapshot(self) -> tuple[Path, str] | None:
         """Copy one unchanged revision for upload; return None if a save races the copy."""
-        before = _file_signature(self.document)
+        try:
+            before = _file_signature(self.document)
+        except FileNotFoundError:
+            return None
         snapshot = self.directory / ".upload"
         try:
             snapshot.unlink()
@@ -77,7 +80,7 @@ class RecoveryWorkspace:
             flags |= os.O_NOFOLLOW
         descriptor = os.open(snapshot, flags, 0o600)
         try:
-            with _open_regular_readonly(self.document) as source, os.fdopen(descriptor, "wb", closefd=True) as target:
+            with os.fdopen(descriptor, "wb", closefd=True) as target, _open_regular_readonly(self.document) as source:
                 while True:
                     chunk = source.read(65_536)
                     if not chunk:
@@ -86,10 +89,13 @@ class RecoveryWorkspace:
                     target.write(chunk)
                 target.flush()
                 os.fsync(target.fileno())
+            after = _file_signature(self.document)
+        except FileNotFoundError:
+            _safe_unlink(snapshot)
+            return None
         except BaseException:
             _safe_unlink(snapshot)
             raise
-        after = _file_signature(self.document)
         if before != after:
             _safe_unlink(snapshot)
             return None
@@ -138,12 +144,16 @@ class RecoveryWorkspace:
 
 def safe_local_filename(filename: str) -> str:
     normalized = unicodedata.normalize("NFKC", filename)
+    windows_device = normalized.split(".", 1)[0].rstrip(" ").upper()
     if (
         not normalized
         or normalized in {".", ".."}
         or Path(normalized).name != normalized
         or not _SAFE_NAME.fullmatch(normalized)
         or normalized.endswith((".", " "))
+        or windows_device in {"CON", "PRN", "AUX", "NUL"}
+        or re.fullmatch(r"(?:COM|LPT)[1-9]", windows_device)
+        or normalized.lower() in {"recovery.json", "recovery.tmp"}
     ):
         extension = Path(normalized).suffix.lower()
         return "document" + (extension if _SAFE_EXTENSION.fullmatch(extension) else ".bin")

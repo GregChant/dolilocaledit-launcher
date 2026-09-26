@@ -42,7 +42,7 @@ class CliTest(unittest.TestCase):
             with redirect_stdout(StringIO()):
                 result = main(["open", "dolilocaledit://check/?redacted"])
         self.assertEqual(result, 0)
-        api.confirm_launcher_check.assert_called_once_with("T" * 43, "1.0.3", "linux")
+        api.confirm_launcher_check.assert_called_once_with("T" * 43, "1.0.4", "linux")
 
     def test_installation_failure_is_shown_explicitly(self) -> None:
         error = ApiError("installation_failed", "La copie du lanceur a échoué.")

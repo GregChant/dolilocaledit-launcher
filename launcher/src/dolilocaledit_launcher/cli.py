@@ -28,6 +28,7 @@ from .session import EditingSessionRunner, PreparedSession
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dolilocaledit-launcher")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
     open_parser = subparsers.add_parser("open", help="ouvrir un lien Doli Local Edit")
     open_parser.add_argument("uri")

@@ -181,7 +181,7 @@ class EditingSessionRunner:
             exchange.session_uuid,
         )
         upload_started = False
-        preserve_untracked = False
+        preserve_open_editor = False
         try:
             temporary = workspace.download_path()
             api.download(access_token, temporary, exchange.base_sha256, exchange.byte_size)
@@ -202,18 +202,31 @@ class EditingSessionRunner:
                 # An automatically discovered command is therefore watched as
                 # an untracked association, even if its short bootstrap exits.
                 editor = EditorHandle(editor.process, False)
-            preserve_untracked = not editor.reliable_exit
+            preserve_open_editor = True
             candidate_signature: tuple[int, int, int] | None = None
             candidate_since = 0.0
+            missing_since: float | None = None
             now = self.monotonic()
             next_heartbeat = now + max(1, exchange.heartbeat_seconds)
             hard_deadline = now + 43_140
 
             while True:
                 now = self.monotonic()
+                editor_finished = (
+                    editor.reliable_exit
+                    and editor.process is not None
+                    and editor.process.poll() is not None
+                )
+                preserve_open_editor = not editor_finished
+                try:
+                    current_signature = file_signature(workspace.document)
+                except FileNotFoundError:
+                    # Some editors remove the previous file before moving the
+                    # saved revision into place. Keep the lease during that gap.
+                    current_signature = None
                 if now >= hard_deadline:
-                    if file_signature(workspace.document) == initial_signature:
-                        self._expire_unchanged(workspace, api, access_token, lease_version)
+                    if current_signature == initial_signature:
+                        self._expire_unchanged(workspace, api, access_token, lease_version, preserve_open_editor)
                         return SessionResult("expired_unchanged", workspace.document.name)
                     raise ApiError("session_timeout", "La durée maximale de la session locale est atteinte.")
                 if now >= next_heartbeat:
@@ -221,13 +234,16 @@ class EditingSessionRunner:
                     workspace.update_status("editing", lease_expires_at=lease_expiry)
                     next_heartbeat = now + max(1, exchange.heartbeat_seconds)
 
-                current_signature = file_signature(workspace.document)
+                if current_signature is None:
+                    candidate_signature = None
+                    if missing_since is None:
+                        missing_since = now
+                    elif now - missing_since >= 30:
+                        raise WorkspaceError("local_io_failed", "Le document local reste introuvable après la sauvegarde.")
+                    self.sleep(self.config.poll_seconds)
+                    continue
+                missing_since = None
                 changed = current_signature != initial_signature
-                editor_finished = (
-                    editor.reliable_exit
-                    and editor.process is not None
-                    and editor.process.poll() is not None
-                )
                 if changed:
                     if candidate_signature != current_signature:
                         candidate_signature = current_signature
@@ -239,6 +255,7 @@ class EditingSessionRunner:
                         prepared = workspace.stable_snapshot()
                         if prepared is None:
                             candidate_signature = None
+                            self.sleep(self.config.poll_seconds)
                             continue
                         snapshot, snapshot_sha256 = prepared
                         if snapshot_sha256 == exchange.base_sha256:
@@ -302,20 +319,20 @@ class EditingSessionRunner:
                 self.sleep(self.config.poll_seconds)
         except KeyboardInterrupt as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_untracked
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
             )
             error = LauncherError("cancelled", "La session locale a été interrompue.")
             self._add_error_context(error, workspace, outcome)
             raise error from exc
         except LauncherError as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_untracked
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
             )
             self._add_error_context(exc, workspace, outcome)
             raise
         except OSError as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_untracked
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
             )
             error = WorkspaceError("local_io_failed", "Le document local est inaccessible.")
             self._add_error_context(error, workspace, outcome)
@@ -327,8 +344,9 @@ class EditingSessionRunner:
         api: ApiLike,
         access_token: str,
         lease_version: int,
+        preserve_open_editor: bool,
     ) -> None:
-        """End an unchanged session quietly; a locked local copy is left as a neutral trace."""
+        """End quietly while preserving any copy that may still receive an editor save."""
         cancelled = False
         try:
             api.cancel(access_token, lease_version)
@@ -336,18 +354,19 @@ class EditingSessionRunner:
         except LauncherError:
             # The lease remains bounded server-side and expires without user action.
             pass
-        try:
-            workspace.discard()
-            return
-        except (LauncherError, OSError):
-            # Some Windows editors keep the downloaded file open. Do not turn a
-            # harmless cleanup limitation into an error dialog.
-            pass
+        if not preserve_open_editor:
+            try:
+                workspace.discard()
+                return
+            except (LauncherError, OSError):
+                # An editor may keep the downloaded file locked after exit.
+                pass
         try:
             workspace.update_status(
                 "expired_unchanged",
                 server_cancelled=cancelled,
                 modified=False,
+                editor_may_be_open=preserve_open_editor,
             )
         except OSError:
             pass
@@ -360,12 +379,12 @@ class EditingSessionRunner:
         lease_version: int,
         base_sha256: str,
         upload_started: bool,
-        preserve_untracked: bool,
+        preserve_open_editor: bool,
     ) -> RecoveryOutcome:
         modified = True
         try:
-            modified = workspace.document.is_file() and file_sha256(workspace.document) != base_sha256
-        except OSError:
+            modified = file_sha256(workspace.document) != base_sha256
+        except (OSError, WorkspaceError):
             pass
         cancelled = False
         if not upload_started:
@@ -374,7 +393,7 @@ class EditingSessionRunner:
                 cancelled = True
             except Exception:
                 pass
-        if not modified and cancelled and not preserve_untracked:
+        if not modified and cancelled and not preserve_open_editor:
             try:
                 workspace.discard()
             except (LauncherError, OSError):

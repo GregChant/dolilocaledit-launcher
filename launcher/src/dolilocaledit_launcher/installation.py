@@ -101,10 +101,14 @@ def install_for_current_user(source: Path | None = None, version: str | None = N
             if stat.S_ISLNK(target_details.st_mode) or not stat.S_ISREG(target_details.st_mode):
                 raise ConfigurationError("installation_target_invalid", "La cible d’installation est invalide.")
             if target_sha256 != source_sha256:
-                raise ConfigurationError(
-                    "installation_target_invalid",
-                    "Un exécutable inattendu utilise déjà le nom sécurisé de cette version.",
-                )
+                if sys.platform == "win32":
+                    raise ConfigurationError(
+                        "installation_target_invalid",
+                        "Un exécutable inattendu utilise déjà le nom sécurisé de cette version.",
+                    )
+                # Linux uses a fixed path. Replace its directory entry atomically
+                # so an existing worker can keep reading the previous inode.
+                _copy_launcher(source_path, target, source_sha256)
         else:
             _copy_launcher(source_path, target, source_sha256)
     if os.name == "posix":
