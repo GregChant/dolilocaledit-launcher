@@ -15,7 +15,7 @@ Use the [versioned GitHub releases](https://github.com/GregChant/dolilocaledit-l
 - Windows x86-64: `DoliLocalEdit-Setup-<version>.exe`;
 - Linux x86-64: `DoliLocalEdit-linux-x86_64-<version>.tar.gz`.
 
-The current stable release is **1.0.4**. On Windows, run the signed setup executable; it installs
+The current stable release is **1.0.5**. On Windows, run the signed setup executable; it installs
 the launcher for the current user without administrator rights. On Linux, extract the archive and
 run `install.sh`; it installs under `~/.local` without administrator rights.
 
@@ -35,6 +35,12 @@ replace their working file receive a 30-second grace period while heartbeats con
 upgrades replace the executable atomically so existing editing sessions can keep running.
 Protocol workers use independent PyInstaller instances to avoid temporary-directory cleanup
 races.
+
+Version 1.0.5 keeps the server lease through intermediate saves and publishes the final stable
+revision only after the exact document closes or the user explicitly finishes locally. Windows
+Office document tracking supports reused application instances; recognized LibreOffice commands
+observe the document owner marker. If closure is unknown, the local completion control asks the
+user to save and close first and preserves the working copy after publication.
 
 The Windows executable is Authenticode-signed and timestamped by **Experts Conseils Chanton**.
 Verify the Digital Signatures tab before installation. Linux releases include the archive's

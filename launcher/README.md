@@ -91,8 +91,10 @@ appartenir à l'utilisateur et avoir les permissions `0600`. Exemple :
 
 Chaque éditeur configuré doit être un chemin absolu. Les arguments sont un tableau et sont
 passés directement au processus avec `shell=False`. `{file}` est remplacé par le chemin local ;
-s'il est absent, ce chemin est ajouté comme dernier argument. Pour publier la dernière révision,
-la commande configurée doit rester attachée jusqu'à la fermeture de l'éditeur.
+s'il est absent, ce chemin est ajouté comme dernier argument. La sortie d'un processus est
+utilisée comme fermeture uniquement pour les éditeurs de terminal reconnus exécutés au premier
+plan, sans mode distant ou détaché. Les autres applications utilisent le suivi du document ou
+la confirmation locale **Terminer l'édition**.
 
 Sous Windows ou Linux graphique, si aucun choix n'est déjà enregistré, le lanceur affiche un sélecteur local pour
 chaque format pris en charge. Il propose les applications reconnues, l'association Windows
@@ -104,9 +106,13 @@ configuration. Pour rétablir la question, exécuter
 entrées Windows « App Paths » et les emplacements d'installation usuels ; aucune liste de
 programmes ne vient de Dolibarr.
 
-Office et LibreOffice pouvant réutiliser un processus déjà ouvert, un choix automatique mémorisé
-est traité comme une association dont la fermeture n'est pas observable. Le lanceur publie donc
-la première sauvegarde stable et conserve la copie de travail par prudence.
+Office et LibreOffice peuvent réutiliser un processus déjà ouvert. Le lanceur suit donc le
+document précis lorsque le profil local le permet : document Office dans son instance Windows,
+verrou propriétaire LibreOffice observé, ou processus de terminal reconnu au premier plan. Une
+erreur de détection ne vaut jamais fermeture. Les sauvegardes intermédiaires conservent la
+location ; la dernière version stable est publiée après fermeture effective du document.
+La fermeture de la dernière fenêtre Office reste observable lorsque le processus propriétaire
+déjà identifié se termine ; une erreur COM avec un processus encore vivant ne vaut pas fermeture.
 
 Une session dont la durée maximale est atteinte sans changement enregistré sur disque est
 annulée sans boîte d'erreur. Le lanceur conserve la copie et le manifeste `expired_unchanged`
@@ -117,10 +123,10 @@ le document n'a pas encore changé sur disque. Un éditeur qui remplace son fich
 l'enregistrement dispose d'un délai de 30 secondes pour recréer le document ; les heartbeats
 restent actifs pendant ce délai.
 
-Sans association explicite, le lanceur ouvre l'application système. Comme certains systèmes ne
-permettent pas d'observer de façon fiable la fermeture de cette application, la première
-sauvegarde stable est publiée puis la copie de travail est conservée avec l'état
-`published_recovery`. Les dossiers conservés sont listés par :
+Sans association explicite, le lanceur ouvre l'application système et tente le même suivi du
+document. Lorsque la fermeture n'est pas observable, le dialogue local **Terminer l'édition**
+permet de confirmer l'enregistrement et la fermeture. La copie de travail reste conservée avec
+l'état `published_recovery` après publication. Les dossiers conservés sont listés par :
 
 ```bash
 dolilocaledit-launcher recoveries
@@ -180,7 +186,7 @@ clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 1.0.4 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.0.5 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la

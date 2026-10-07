@@ -11,10 +11,17 @@ from typing import Any, Callable, Protocol
 from .api import DoliLocalEditApi, ExchangeResult, UploadResult
 from .config import LauncherConfig, default_recovery_root, remember_editor_choice
 from .editor import EditorChoice, EditorHandle, choose_editor, open_editor
+from .document_monitor import DocumentState, create_document_monitor
+from .finish import FinishControl, create_finish_control
 from .approval import confirm_external_template_change
 from .errors import ApiError, ExternalTemplateApprovalRequired, LauncherError, WorkspaceError
 from .protocol import normalize_origin, parse_launch_uri, validate_endpoint
 from .workspace import RecoveryWorkspace, file_sha256, file_signature
+
+
+class DocumentMonitorLike(Protocol):
+    def poll(self) -> DocumentState: ...
+    def close(self) -> None: ...
 
 
 class ApiLike(Protocol):
@@ -144,6 +151,8 @@ class EditingSessionRunner:
         editor_selector: Callable[[Path], EditorChoice | None] = choose_editor,
         editor_choice_saver: Callable[[str, tuple[str, ...] | None], Path] = remember_editor_choice,
         external_template_approver: Callable[[str, str], bool] = confirm_external_template_change,
+        monitor_factory: Callable[[Path, tuple[str, ...] | None], DocumentMonitorLike] = create_document_monitor,
+        finish_factory: Callable[[Path], FinishControl] = create_finish_control,
     ) -> None:
         self.config = config
         self.recovery_root = recovery_root or default_recovery_root()
@@ -154,6 +163,8 @@ class EditingSessionRunner:
         self.editor_selector = editor_selector
         self.editor_choice_saver = editor_choice_saver
         self.external_template_approver = external_template_approver
+        self.monitor_factory = monitor_factory
+        self.finish_factory = finish_factory
 
     def run(self, uri: str) -> SessionResult:
         return self.run_prepared(self.prepare(uri))
@@ -182,6 +193,8 @@ class EditingSessionRunner:
         )
         upload_started = False
         preserve_open_editor = False
+        monitor: DocumentMonitorLike | None = None
+        finish: FinishControl | None = None
         try:
             temporary = workspace.download_path()
             api.download(access_token, temporary, exchange.base_sha256, exchange.byte_size)
@@ -196,8 +209,14 @@ class EditingSessionRunner:
                     editor_command = selected_choice.command
                     if selected_choice.remember:
                         self.editor_choice_saver(extension, editor_command)
+            # Start observation before opening, including an already running office suite.
+            monitor = self.monitor_factory(workspace.document, editor_command)
             editor = self.editor_opener(workspace.document, editor_command)
-            if selected_choice is not None or not self.config.editor_exit_is_reliable(extension):
+            if (
+                selected_choice is not None
+                or not self.config.editor_exit_is_reliable(extension)
+                or not _trusted_foreground_editor(editor_command)
+            ):
                 # GUI suites frequently delegate to an already running process.
                 # An automatically discovered command is therefore watched as
                 # an untracked association, even if its short bootstrap exits.
@@ -206,18 +225,47 @@ class EditingSessionRunner:
             candidate_signature: tuple[int, int, int] | None = None
             candidate_since = 0.0
             missing_since: float | None = None
+            manual_finished = False
+            unknown_since: float | None = None
+            observed_document_open = False
             now = self.monotonic()
             next_heartbeat = now + max(1, exchange.heartbeat_seconds)
             hard_deadline = now + 43_140
 
             while True:
                 now = self.monotonic()
-                editor_finished = (
-                    editor.reliable_exit
+                document_state = monitor.poll()
+                if document_state == DocumentState.OPEN:
+                    observed_document_open = True
+                tracked_exit = (
+                    not observed_document_open
+                    and document_state == DocumentState.UNKNOWN
+                    and editor.reliable_exit
                     and editor.process is not None
                     and editor.process.poll() is not None
                 )
-                preserve_open_editor = not editor_finished
+                if document_state != DocumentState.UNKNOWN:
+                    unknown_since = None
+                elif unknown_since is None:
+                    unknown_since = now
+                if document_state == DocumentState.OPEN:
+                    # A reopened document or cancelled close invalidates any previous finish request.
+                    manual_finished = False
+                elif document_state == DocumentState.UNKNOWN and (
+                    not editor.reliable_exit or observed_document_open
+                ):
+                    if not manual_finished and now - unknown_since >= 8:
+                        if finish is None:
+                            finish = self.finish_factory(workspace.document)
+                        manual_finished = finish.requested()
+                if document_state != DocumentState.UNKNOWN and finish is not None:
+                    finish.close()
+                    finish = None
+                editor_finished = document_state == DocumentState.CLOSED or tracked_exit or manual_finished
+                # Explicit finish cannot prove an untracked editor released its local file.
+                preserve_open_editor = document_state != DocumentState.CLOSED and not tracked_exit
+                if not editor_finished:
+                    candidate_signature = None
                 try:
                     current_signature = file_signature(workspace.document)
                 except FileNotFoundError:
@@ -226,7 +274,10 @@ class EditingSessionRunner:
                     current_signature = None
                 if now >= hard_deadline:
                     if current_signature == initial_signature:
-                        self._expire_unchanged(workspace, api, access_token, lease_version, preserve_open_editor)
+                        self._expire_unchanged(
+                            workspace, api, access_token, lease_version, exchange.base_sha256,
+                            preserve_open_editor, monitor,
+                        )
                         return SessionResult("expired_unchanged", workspace.document.name)
                     raise ApiError("session_timeout", "La durée maximale de la session locale est atteinte.")
                 if now >= next_heartbeat:
@@ -243,100 +294,116 @@ class EditingSessionRunner:
                     self.sleep(self.config.poll_seconds)
                     continue
                 missing_since = None
-                changed = current_signature != initial_signature
-                if changed:
-                    if candidate_signature != current_signature:
-                        candidate_signature = current_signature
-                        candidate_since = now
-                    elif (
-                        now - candidate_since >= self.config.stable_seconds
-                        and (not editor.reliable_exit or editor_finished)
-                    ):
-                        prepared = workspace.stable_snapshot()
-                        if prepared is None:
-                            candidate_signature = None
-                            self.sleep(self.config.poll_seconds)
-                            continue
-                        snapshot, snapshot_sha256 = prepared
-                        if snapshot_sha256 == exchange.base_sha256:
-                            initial_signature = current_signature
-                            candidate_signature = None
+                if not editor_finished:
+                    # Stable intermediate saves never publish or release an open document.
+                    self.sleep(self.config.poll_seconds)
+                    continue
+                if candidate_signature != current_signature:
+                    candidate_signature = current_signature
+                    candidate_since = now
+                elif now - candidate_since >= self.config.stable_seconds:
+                    # Wait after the confirmed close, including for an unchanged file: an
+                    # editor may still replace its working file during its final save.
+                    snapshot_result = workspace.stable_snapshot()
+                    if snapshot_result is None:
+                        candidate_signature = None
+                        self.sleep(self.config.poll_seconds)
+                        continue
+                    snapshot, snapshot_sha256 = snapshot_result
+                    if snapshot_sha256 == exchange.base_sha256:
+                        api.cancel(access_token, lease_version)
+                        name = workspace.document.name
+                        still_closed = monitor.poll() == DocumentState.CLOSED or tracked_exit
+                        unchanged = file_sha256(workspace.document) == exchange.base_sha256
+                        if not preserve_open_editor and still_closed and unchanged:
+                            workspace.discard()
                         else:
-                            upload_started = True
-                            workspace.update_status("uploading", sha256=snapshot_sha256)
-                            try:
-                                uploaded = api.upload(
-                                    access_token,
-                                    snapshot,
-                                    exchange.base_sha256,
-                                    lease_version,
-                                )
-                            except ExternalTemplateApprovalRequired as challenge:
-                                # This structured response is emitted before any server mutation.
-                                upload_started = False
-                                if not self.external_template_approver(challenge.target, challenge.scope):
-                                    raise ApiError(
-                                        "external_template_declined",
-                                        "La publication a été annulée car le nouveau modèle Word n’a pas été approuvé.",
-                                    ) from challenge
-                                upload_started = True
-                                try:
-                                    uploaded = api.upload(
-                                        access_token,
-                                        snapshot,
-                                        exchange.base_sha256,
-                                        lease_version,
-                                        challenge.approval,
-                                    )
-                                except ExternalTemplateApprovalRequired as retry_challenge:
-                                    upload_started = False
-                                    raise ApiError(
-                                        "external_template_changed",
-                                        "Dolibarr n’a pas accepté la confirmation du nouveau modèle Word.",
-                                    ) from retry_challenge
-                            if uploaded.sha256 != snapshot_sha256:
-                                raise ApiError("upload_mismatch", "L’empreinte publiée ne correspond pas au fichier local.")
-                            workspace.update_status("awaiting_completion", sha256=uploaded.sha256)
-                            api.complete(access_token, lease_version, uploaded.sha256)
-                            name = workspace.document.name
-                            if editor_finished and file_sha256(workspace.document) == uploaded.sha256:
-                                workspace.discard()
-                                return SessionResult("completed", name)
                             workspace.update_status(
-                                "published_recovery",
-                                sha256=uploaded.sha256,
-                                editor_exit_untracked=not editor.reliable_exit,
+                                "cancelled_recovery", server_cancelled=True,
+                                editor_exit_untracked=not still_closed, modified=not unchanged,
                             )
-                            return SessionResult("completed_recovery", name)
-                else:
-                    candidate_signature = None
-
-                if editor_finished and not changed:
-                    api.cancel(access_token, lease_version)
+                        return SessionResult("cancelled", name)
+                    upload_started = True
+                    workspace.update_status("uploading", sha256=snapshot_sha256)
+                    try:
+                        uploaded = api.upload(
+                            access_token,
+                            snapshot,
+                            exchange.base_sha256,
+                            lease_version,
+                        )
+                    except ExternalTemplateApprovalRequired as challenge:
+                        # This structured response is emitted before any server mutation.
+                        upload_started = False
+                        if not self.external_template_approver(challenge.target, challenge.scope):
+                            raise ApiError(
+                                "external_template_declined",
+                                "La publication a été annulée car le nouveau modèle Word n’a pas été approuvé.",
+                            ) from challenge
+                        upload_started = True
+                        try:
+                            uploaded = api.upload(
+                                access_token,
+                                snapshot,
+                                exchange.base_sha256,
+                                lease_version,
+                                challenge.approval,
+                            )
+                        except ExternalTemplateApprovalRequired as retry_challenge:
+                            upload_started = False
+                            raise ApiError(
+                                "external_template_changed",
+                                "Dolibarr n’a pas accepté la confirmation du nouveau modèle Word.",
+                            ) from retry_challenge
+                    if uploaded.sha256 != snapshot_sha256:
+                        raise ApiError("upload_mismatch", "L’empreinte publiée ne correspond pas au fichier local.")
+                    workspace.update_status("awaiting_completion", sha256=uploaded.sha256)
+                    api.complete(access_token, lease_version, uploaded.sha256)
                     name = workspace.document.name
-                    workspace.discard()
-                    return SessionResult("cancelled", name)
+                    still_closed = monitor.poll() == DocumentState.CLOSED or tracked_exit
+                    if (
+                        not preserve_open_editor and still_closed
+                        and file_sha256(workspace.document) == uploaded.sha256
+                    ):
+                        workspace.discard()
+                        return SessionResult("completed", name)
+                    workspace.update_status(
+                        "published_recovery",
+                        sha256=uploaded.sha256,
+                        editor_exit_untracked=preserve_open_editor or not still_closed,
+                    )
+                    return SessionResult("completed_recovery", name)
                 self.sleep(self.config.poll_seconds)
         except KeyboardInterrupt as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started,
+                preserve_open_editor, monitor,
             )
             error = LauncherError("cancelled", "La session locale a été interrompue.")
             self._add_error_context(error, workspace, outcome)
             raise error from exc
         except LauncherError as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started,
+                preserve_open_editor, monitor,
             )
             self._add_error_context(exc, workspace, outcome)
             raise
         except OSError as exc:
             outcome = self._recover_or_discard(
-                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started, preserve_open_editor
+                workspace, api, access_token, lease_version, exchange.base_sha256, upload_started,
+                preserve_open_editor, monitor,
             )
             error = WorkspaceError("local_io_failed", "Le document local est inaccessible.")
             self._add_error_context(error, workspace, outcome)
             raise error from exc
+        finally:
+            for observer in (finish, monitor):
+                if observer is not None:
+                    try:
+                        observer.close()
+                    except (OSError, LauncherError):
+                        pass
 
     @staticmethod
     def _expire_unchanged(
@@ -344,7 +411,9 @@ class EditingSessionRunner:
         api: ApiLike,
         access_token: str,
         lease_version: int,
+        base_sha256: str,
         preserve_open_editor: bool,
+        monitor: DocumentMonitorLike | None,
     ) -> None:
         """End quietly while preserving any copy that may still receive an editor save."""
         cancelled = False
@@ -354,19 +423,23 @@ class EditingSessionRunner:
         except LauncherError:
             # The lease remains bounded server-side and expires without user action.
             pass
-        if not preserve_open_editor:
-            try:
+        modified = True
+        closed = False
+        try:
+            modified = file_sha256(workspace.document) != base_sha256
+            closed = monitor is None or monitor.poll() == DocumentState.CLOSED
+            if not preserve_open_editor and closed and not modified:
                 workspace.discard()
                 return
-            except (LauncherError, OSError):
-                # An editor may keep the downloaded file locked after exit.
-                pass
+        except (LauncherError, OSError):
+            # A final save or reopening may race the cancellation response.
+            pass
         try:
             workspace.update_status(
                 "expired_unchanged",
                 server_cancelled=cancelled,
-                modified=False,
-                editor_may_be_open=preserve_open_editor,
+                modified=modified,
+                editor_may_be_open=preserve_open_editor or not closed,
             )
         except OSError:
             pass
@@ -380,12 +453,9 @@ class EditingSessionRunner:
         base_sha256: str,
         upload_started: bool,
         preserve_open_editor: bool,
+        monitor: DocumentMonitorLike | None,
     ) -> RecoveryOutcome:
         modified = True
-        try:
-            modified = file_sha256(workspace.document) != base_sha256
-        except (OSError, WorkspaceError):
-            pass
         cancelled = False
         if not upload_started:
             try:
@@ -393,13 +463,17 @@ class EditingSessionRunner:
                 cancelled = True
             except Exception:
                 pass
-        if not modified and cancelled and not preserve_open_editor:
-            try:
+        closed = False
+        try:
+            # Recheck after cancellation: an unchanged copy may receive a final save
+            # while the server response is in flight, even on an error path.
+            modified = file_sha256(workspace.document) != base_sha256
+            closed = monitor is None or monitor.poll() == DocumentState.CLOSED
+            if not modified and cancelled and not preserve_open_editor and closed:
                 workspace.discard()
-            except (LauncherError, OSError):
-                pass
-            else:
                 return RecoveryOutcome(None, False, True)
+        except (LauncherError, OSError):
+            pass
         try:
             workspace.update_status(
                 "recovery_required",
@@ -423,6 +497,24 @@ class EditingSessionRunner:
             local_changes=outcome.modified_on_disk,
             server_cancelled=outcome.server_cancelled,
         )
+
+
+def _trusted_foreground_editor(command: tuple[str, ...] | None) -> bool:
+    """Only qualified terminal commands can finish a document by process exit."""
+    if not command:
+        return False
+    executable = Path(command[0]).name.casefold()
+    if executable.endswith(".exe"):
+        executable = executable[:-4]
+    if executable not in {"vi", "vim", "vim.basic", "vim.tiny", "vim.nox", "nvim", "nano"}:
+        return False
+    for argument in command[1:]:
+        option = argument.casefold()
+        if option in {"-g", "--gui", "--daemon", "--background"} or option.startswith(
+            ("--remote", "--server", "--listen")
+        ):
+            return False
+    return True
 
 
 def _safe_short_string(value: object, maximum: int) -> bool:

@@ -16,3 +16,7 @@ fingerprint through an independent channel before importing it; the expected fin
 ```text
 A51F BBAB 9A50 9277 1768  E839 8C95 07E9 997C 0569
 ```
+
+Intermediate saves never finish an editing session. Automatic completion requires observed
+document closure; unavailable or failed probes remain unknown. An explicit local completion
+request preserves the working copy. No credential is passed to the document observer or dialog.
