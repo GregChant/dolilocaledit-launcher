@@ -1,6 +1,6 @@
 # Security policy
 
-Doli Local Edit Launcher `1.0.x` is the supported stable series. Security fixes are published in
+Doli Local Edit Launcher `1.x` is the supported stable series. Security fixes are published in
 its latest patch release; development versions `0.x` are no longer supported.
 
 Please use GitHub private vulnerability reporting for security issues. Do not open a public issue

@@ -104,6 +104,29 @@ class LinuxReleaseSigningTest(unittest.TestCase):
             )
             self.assertEqual(verified.returncode, 0, verified.stderr.decode("utf-8", "replace"))
 
+            # The generic command exports the public key and delegates both signatures.
+            generic = repository / "scripts" / "sign-linux.sh"
+            generic_environment = {
+                **environment,
+                "DLE_LINUX_SIGNING_KEY_FINGERPRINT": fingerprint,
+                "DLE_LINUX_RELEASE_CATALOG": str(catalog),
+                "TMPDIR": str(root),
+            }
+            generic_environment.pop("DLE_LINUX_SIGNING_PUBLIC_KEY", None)
+            result = subprocess.run(
+                [str(generic), "--V=1.0.3"],
+                cwd=root,
+                check=False,
+                env=generic_environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(fingerprint, result.stdout)
+            self.assertEqual((catalog / "dolilocaledit-release-key.asc").read_bytes(), exported)
+            self.assertEqual(list(root.glob("dolilocaledit-public-signing-key.*")), [])
+            self.assertEqual((catalog / "SHA256SUMS").read_text(encoding="ascii").splitlines(), checksum_lines)
+
             linux.write_bytes(b"tampered linux fixture")
             rejected = subprocess.run(
                 ["gpg", "--batch", "--verify", str(linux_signature), str(linux)],
@@ -113,6 +136,35 @@ class LinuxReleaseSigningTest(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
             self.assertNotEqual(rejected.returncode, 0)
+
+
+class GenericSigningArgumentsTest(unittest.TestCase):
+    def test_invalid_versions_are_rejected_before_signing(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "scripts" / "sign-linux.sh"
+        for arguments in (
+            [], ["--V="], ["--V=../1.1.0"], ["--V=1.1.0-rc1"],
+            ["--V=1.1.0", "--V=1.2.0"], ["--V=", "--V=1.1.0"], ["--unknown"],
+        ):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([str(script), *arguments], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 64, result.stderr)
+
+    def test_missing_catalog_is_rejected_before_authentication(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "scripts" / "sign-linux.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                [str(script), "--V=1.1.0"],
+                env={**os.environ, "DLE_LINUX_RELEASE_CATALOG": str(Path(temporary) / "missing")},
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 65, result.stderr)
+            self.assertIn("Release catalog not found", result.stderr)
+
+    def test_help_is_available_without_authentication(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "scripts" / "sign-linux.sh"
+        result = subprocess.run([str(script), "--help"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--V=x.y.z", result.stdout)
 
 
 if __name__ == "__main__":

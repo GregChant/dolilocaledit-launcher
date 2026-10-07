@@ -15,7 +15,7 @@ Use the [versioned GitHub releases](https://github.com/GregChant/dolilocaledit-l
 - Windows x86-64: `DoliLocalEdit-Setup-<version>.exe`;
 - Linux x86-64: `DoliLocalEdit-linux-x86_64-<version>.tar.gz`.
 
-The current stable release is **1.0.5**. On Windows, run the signed setup executable; it installs
+The current stable release is **1.1.0**. On Windows, run the signed setup executable; it installs
 the launcher for the current user without administrator rights. On Linux, extract the archive and
 run `install.sh`; it installs under `~/.local` without administrator rights.
 
@@ -42,6 +42,12 @@ Office document tracking supports reused application instances; recognized Libre
 observe the document owner marker. If closure is unknown, the local completion control asks the
 user to save and close first and preserves the working copy after publication.
 
+Version 1.1.0 rebuilds the launcher for the matching Doli Local Edit module release.
+The editing workflow is unchanged. The module now provides document revision history,
+downloads and restoration as a new revision, with a daily Dolibarr scheduled purge that
+keeps revisions for 90 days, at least the latest ten revisions and all pinned revisions.
+Update both the module and the desktop launcher to 1.1.0.
+
 The Windows executable is Authenticode-signed and timestamped by **Experts Conseils Chanton**.
 Verify the Digital Signatures tab before installation. Linux releases include the archive's
 detached OpenPGP signature, signed `SHA256SUMS`, and `dolilocaledit-release-key.asc`. Verify the
@@ -67,6 +73,18 @@ file requires the publisher's private certificate and is deliberately not automa
 `scripts/sign-linux-release.sh` signs the Linux archive and checksum list with an exact OpenPGP
 fingerprint already available in the publisher's protected GnuPG keyring; it never reads or
 exports private key material.
+
+From an interactive terminal, sign a prepared versioned release catalog with:
+
+```bash
+./scripts/sign-linux.sh --V=1.1.0
+```
+
+The command uses `build/release-launchers-1.1.0`, exports only the public verification
+key to a temporary directory and prompts through GnuPG when authentication is needed.
+Optional environment settings select another complete signing-key fingerprint, public
+verification-key file or catalog: `DLE_LINUX_SIGNING_KEY_FINGERPRINT`,
+`DLE_LINUX_SIGNING_PUBLIC_KEY` and `DLE_LINUX_RELEASE_CATALOG`.
 
 The official Linux signing fingerprint is:
 

@@ -73,8 +73,8 @@ fi
 	sha256sum "$DLE_WINDOWS_NAME" "$DLE_LINUX_NAME"
 ) > "$DLE_TEMPORARY/SHA256SUMS"
 
-DLE_GPG_TTY=$(tty 2>/dev/null || true)
-if [ -n "$DLE_GPG_TTY" ]; then
+DLE_GPG_TTY=
+if DLE_GPG_TTY=$(tty 2>/dev/null); then
 	export GPG_TTY="$DLE_GPG_TTY"
 fi
 
