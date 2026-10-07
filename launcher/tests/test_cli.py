@@ -3,12 +3,15 @@ from io import BytesIO
 from io import StringIO
 import hashlib
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
 from dolilocaledit_launcher.api import ExchangeResult
+from dolilocaledit_launcher import __version__
 from dolilocaledit_launcher.cli import _spawn_worker, main
 from dolilocaledit_launcher.errors import ApiError, ProtocolError
+from dolilocaledit_launcher.installation import UninstallationResult
 from dolilocaledit_launcher.protocol import LaunchTarget
 from dolilocaledit_launcher.session import PreparedSession
 
@@ -42,7 +45,7 @@ class CliTest(unittest.TestCase):
             with redirect_stdout(StringIO()):
                 result = main(["open", "dolilocaledit://check/?redacted"])
         self.assertEqual(result, 0)
-        api.confirm_launcher_check.assert_called_once_with("T" * 43, "1.1.0", "linux")
+        api.confirm_launcher_check.assert_called_once_with("T" * 43, __version__, "linux")
 
     def test_installation_failure_is_shown_explicitly(self) -> None:
         error = ApiError("installation_failed", "La copie du lanceur a échoué.")
@@ -54,6 +57,50 @@ class CliTest(unittest.TestCase):
                 result = main(["install"])
         self.assertEqual(result, 2)
         show_error.assert_called_once_with("installation_failed", "La copie du lanceur a échoué.")
+
+    def test_uninstall_shows_its_result_without_running_upgrade_cleanup(self) -> None:
+        result = UninstallationResult(Path("installed"), (Path("running.exe"),))
+        with (
+            patch("dolilocaledit_launcher.cli.uninstall_for_current_user", return_value=result),
+            patch("dolilocaledit_launcher.cli.show_uninstallation_complete") as show_complete,
+            patch("dolilocaledit_launcher.installation.cleanup_obsolete_windows_launchers") as cleanup,
+            patch("dolilocaledit_launcher.cli.sys.platform", "win32"),
+            patch("dolilocaledit_launcher.cli.sys.frozen", True, create=True),
+        ):
+            self.assertEqual(main(["uninstall"]), 0)
+        show_complete.assert_called_once_with(result.path, result.deferred_files)
+        cleanup.assert_not_called()
+
+    def test_quiet_uninstall_suppresses_all_dialogs(self) -> None:
+        with (
+            patch("dolilocaledit_launcher.cli.uninstall_for_current_user", return_value=UninstallationResult(Path("installed"))),
+            patch("dolilocaledit_launcher.cli.show_uninstallation_complete") as show_complete,
+            patch("dolilocaledit_launcher.cli.show_uninstallation_error") as show_error,
+            redirect_stdout(StringIO()),
+        ):
+            self.assertEqual(main(["uninstall", "--quiet"]), 0)
+        show_complete.assert_not_called()
+        show_error.assert_not_called()
+
+    def test_quiet_uninstall_failure_returns_error_without_a_dialog(self) -> None:
+        error = ApiError("uninstallation_failed", "Échec de la désinstallation.")
+        with (
+            patch("dolilocaledit_launcher.cli.uninstall_for_current_user", side_effect=error),
+            patch("dolilocaledit_launcher.cli.show_uninstallation_error") as show_error,
+            redirect_stderr(StringIO()),
+        ):
+            self.assertEqual(main(["uninstall", "--quiet"]), 2)
+        show_error.assert_not_called()
+
+    def test_interactive_uninstall_failure_is_shown_explicitly(self) -> None:
+        error = ApiError("uninstallation_failed", "Échec de la désinstallation.")
+        with (
+            patch("dolilocaledit_launcher.cli.uninstall_for_current_user", side_effect=error),
+            patch("dolilocaledit_launcher.cli.show_uninstallation_error") as show_error,
+            redirect_stderr(StringIO()),
+        ):
+            self.assertEqual(main(["uninstall"]), 2)
+        show_error.assert_called_once_with("uninstallation_failed", "Échec de la désinstallation.")
 
     def test_first_open_requires_explicit_origin_approval(self) -> None:
         runner = MagicMock()

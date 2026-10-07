@@ -18,7 +18,8 @@ for DLE_ARGUMENT in "$@"; do
 			;;
 		--help|-h)
 			echo "Usage: $0 --V=x.y.z"
-			echo "Sign build/release-launchers-x.y.z using the configured GnuPG key."
+			echo "Sign launcher release build/release-launchers-x.y.z using the configured GnuPG key."
+			echo "The launcher version is independent of the Dolibarr module version."
 			echo "Optional environment: DLE_LINUX_SIGNING_KEY_FINGERPRINT, DLE_LINUX_SIGNING_PUBLIC_KEY, DLE_LINUX_RELEASE_CATALOG."
 			exit 0
 			;;

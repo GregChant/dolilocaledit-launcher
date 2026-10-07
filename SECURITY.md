@@ -20,3 +20,13 @@ A51F BBAB 9A50 9277 1768  E839 8C95 07E9 997C 0569
 Intermediate saves never finish an editing session. Automatic completion requires observed
 document closure; unavailable or failed probes remain unknown. An explicit local completion
 request preserves the working copy. No credential is passed to the document observer or dialog.
+
+Module and launcher versions are independent. Reuse keeps the exact signed executable bytes
+and immutable release URLs; any client, security, build toolchain or compatibility change
+requires a new launcher release. A reviewed source and build-input inventory prevents silent
+reuse after relevant inputs change.
+
+Windows installation and uninstallation use HKCU and the current user’s program directory.
+Uninstallation preserves local configuration, recovery documents and foreign protocol handlers,
+and never stops an editing process. Deferred cleanup validates the exact path, file digest and
+current registration under the same mutex as installation before deleting a program file.

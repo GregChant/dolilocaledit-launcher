@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from contextlib import nullcontext
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,11 @@ from dolilocaledit_launcher.installation import (
 
 
 class InstallationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        mutex = patch("dolilocaledit_launcher.installation._windows_installation_lock", side_effect=lambda: nullcontext())
+        mutex.start()
+        self.addCleanup(mutex.stop)
+
     def test_windows_install_copies_then_registers_per_user(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -24,7 +30,7 @@ class InstallationTest(unittest.TestCase):
             with (
                 patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
                 patch.dict("os.environ", {"LOCALAPPDATA": str(root / "local")}),
-                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+                patch("dolilocaledit_launcher.installation.register_windows_installation") as register,
             ):
                 installed = install_for_current_user(source, "1.0.3")
             digest = hashlib.sha256(b"frozen-launcher").hexdigest()
@@ -37,7 +43,7 @@ class InstallationTest(unittest.TestCase):
                 / f"dolilocaledit-launcher-1.0.3-{digest}.exe",
             )
             self.assertEqual(installed.path.read_bytes(), b"frozen-launcher")
-            register.assert_called_once_with(installed.path)
+            register.assert_called_once_with(installed.path, "1.0.3")
 
     def test_linux_install_is_private_and_registers_without_admin(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -68,7 +74,7 @@ class InstallationTest(unittest.TestCase):
                 patch("dolilocaledit_launcher.installation.unregister_linux_protocol") as unregister,
             ):
                 removed = uninstall_for_current_user()
-            self.assertEqual(removed, target)
+            self.assertEqual(removed.path, target)
             self.assertFalse(target.exists())
             unregister.assert_called_once_with()
 
@@ -100,7 +106,7 @@ class InstallationTest(unittest.TestCase):
             with (
                 patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
                 patch("dolilocaledit_launcher.installation.default_windows_install_path", return_value=target),
-                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+                patch("dolilocaledit_launcher.installation.register_windows_installation") as register,
             ):
                 with self.assertRaises(ConfigurationError) as context:
                     install_for_current_user(source, "1.0.3")
@@ -139,7 +145,7 @@ class InstallationTest(unittest.TestCase):
             with (
                 patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
                 patch("dolilocaledit_launcher.installation.default_windows_install_path", return_value=target),
-                patch("dolilocaledit_launcher.installation.register_protocol", side_effect=PermissionError("denied")),
+                patch("dolilocaledit_launcher.installation.register_windows_installation", side_effect=PermissionError("denied")),
             ):
                 with self.assertRaises(ConfigurationError) as context:
                     install_for_current_user(source, "1.0.3")
@@ -166,7 +172,7 @@ class InstallationTest(unittest.TestCase):
             with (
                 patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
                 patch.dict("os.environ", {"LOCALAPPDATA": str(root / "local")}),
-                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+                patch("dolilocaledit_launcher.installation.register_windows_installation") as register,
                 patch("dolilocaledit_launcher.installation.find_running_windows_launchers", return_value=running),
                 patch("dolilocaledit_launcher.installation.Path.unlink", autospec=True, side_effect=keep_running),
             ):
@@ -176,7 +182,7 @@ class InstallationTest(unittest.TestCase):
             self.assertNotEqual(installed.path, previous)
             self.assertEqual(installed.running_previous_instances, running)
             self.assertEqual(installed.retained_previous_files, (previous,))
-            register.assert_called_once_with(installed.path)
+            register.assert_called_once_with(installed.path, "1.0.3")
 
     def test_windows_reinstall_reuses_identical_immutable_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -197,11 +203,11 @@ class InstallationTest(unittest.TestCase):
             with (
                 patch("dolilocaledit_launcher.installation.sys.platform", "win32"),
                 patch.dict("os.environ", {"LOCALAPPDATA": str(root / "local")}),
-                patch("dolilocaledit_launcher.installation.register_protocol") as register,
+                patch("dolilocaledit_launcher.installation.register_windows_installation") as register,
             ):
                 installed = install_for_current_user(source, "1.0.3")
             self.assertEqual(installed.path, target)
-            register.assert_called_once_with(target)
+            register.assert_called_once_with(target, "1.0.3")
 
     def test_cleanup_ignores_unrelated_windows_executables(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

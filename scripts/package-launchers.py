@@ -38,8 +38,8 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_windows(source: Path, files: Path, version: str) -> dict[str, object]:
-    target = files / f"DoliLocalEdit-Setup-{version}.exe"
+def _copy_windows(source: Path, files: Path) -> dict[str, object]:
+    target = files / "DoliLocalEdit-Setup.exe"
     shutil.copyfile(_regular_file(source), target)
     target.chmod(0o644)
     return _entry(
@@ -50,10 +50,10 @@ def _copy_windows(source: Path, files: Path, version: str) -> dict[str, object]:
     )
 
 
-def _package_linux(source: Path, installer: Path, files: Path, version: str) -> dict[str, object]:
+def _package_linux(source: Path, installer: Path, files: Path) -> dict[str, object]:
     executable = _regular_file(source)
     install_script = _regular_file(installer)
-    target = files / f"DoliLocalEdit-linux-x86_64-{version}.tar.gz"
+    target = files / "DoliLocalEdit-linux-x86_64.tar.gz"
     with target.open("wb") as raw_stream:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_stream, mtime=0) as gzip_stream:
             with tarfile.open(fileobj=gzip_stream, mode="w") as archive:
@@ -148,6 +148,8 @@ def main() -> int:
     files = destination / "files"
     files.mkdir(mode=0o755, parents=True, exist_ok=True)
     for generated_name in (
+        "DoliLocalEdit-Setup.exe",
+        "DoliLocalEdit-linux-x86_64.tar.gz",
         f"DoliLocalEdit-Setup-{options.version}.exe",
         f"DoliLocalEdit-linux-x86_64-{options.version}.tar.gz",
     ):
@@ -156,9 +158,9 @@ def main() -> int:
             generated.unlink()
     entries: list[dict[str, object]] = []
     if options.windows_executable is not None:
-        entries.append(_copy_windows(options.windows_executable, files, options.version))
+        entries.append(_copy_windows(options.windows_executable, files))
     if options.linux_executable is not None:
-        entries.append(_package_linux(options.linux_executable, options.linux_installer, files, options.version))
+        entries.append(_package_linux(options.linux_executable, options.linux_installer, files))
     if external_base_url is not None:
         for entry in entries:
             entry["url"] = external_base_url + "/" + quote(str(entry["filename"]), safe="")

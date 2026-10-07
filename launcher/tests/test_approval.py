@@ -44,6 +44,28 @@ class ApprovalTest(unittest.TestCase):
         self.assertIn("file:///C:/Templates/local.dotx", messages[0])
         self.assertNotIn("local\n.dotx", messages[0])
 
+    def test_uninstall_confirmation_preserves_documents_and_active_edits(self) -> None:
+        with (
+            patch.object(approval.sys, "platform", "win32"),
+            patch.object(approval, "_windows_message") as show,
+        ):
+            approval.show_uninstallation_complete(Path("installed"), (Path("busy.exe"),))
+        message = show.call_args.args[0]
+        self.assertIn("Désinstallation réussie", message)
+        self.assertIn("copies de reprise sont conservés", message)
+        self.assertIn("éditions en cours continuent", message)
+
+    def test_uninstall_error_has_a_sanitized_diagnostic_without_losing_recoveries(self) -> None:
+        with (
+            patch.object(approval.sys, "platform", "win32"),
+            patch.object(approval, "_windows_message") as show,
+        ):
+            approval.show_uninstallation_error("BAD CODE", "Accès\nrefusé")
+        message = show.call_args.args[0]
+        self.assertIn("Code de diagnostic : uninstallation_error", message)
+        self.assertIn("copies de reprise sont conservés", message)
+        self.assertNotIn("Accès\nrefusé", message)
+
     def test_error_message_identifies_document_recovery_and_next_action(self) -> None:
         message = launcher_error_message(
             "document_conflict",

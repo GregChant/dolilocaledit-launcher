@@ -4,7 +4,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[A-Fa-f0-9]{64}$')]
-    [string]$ExpectedSignerSha256
+    [string]$ExpectedSignerSha256,
+
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')]
+    [string]$ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +26,12 @@ $SignerSha256 = $Signature.SignerCertificate.GetCertHashString(
 ).ToUpperInvariant()
 if ($SignerSha256 -ne $ExpectedSignerSha256.ToUpperInvariant()) {
     throw "The Windows launcher signer is unexpected: $SignerSha256."
+}
+if (-not [string]::IsNullOrEmpty($ExpectedVersion)) {
+    $Version = (Get-Item -LiteralPath $ResolvedExecutable).VersionInfo
+    if ($Version.FileVersion -ne $ExpectedVersion -or $Version.ProductVersion -ne $ExpectedVersion) {
+        throw "The Windows launcher file/product version does not match the requested launcher release $ExpectedVersion."
+    }
 }
 
 Write-Output "Windows Authenticode signature: valid, timestamped, expected signer $SignerSha256"

@@ -4,18 +4,31 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
+from typing import Iterator
 
 from .errors import ConfigurationError
-from .registration import register_protocol, unregister_linux_protocol
+from .registration import (
+    is_owned_windows_launcher,
+    register_protocol,
+    register_windows_installation,
+    unregister_linux_protocol,
+    unregister_windows_installation,
+    windows_install_directory,
+)
 
 
 _VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -44,9 +57,16 @@ class InstallationResult:
     retained_previous_files: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class UninstallationResult:
+    """Removed registration and any program files waiting for their processes to exit."""
+
+    path: Path
+    deferred_files: tuple[Path, ...] = ()
+
+
 def default_windows_install_directory() -> Path:
-    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    return base / "Programs" / "DoliLocalEdit"
+    return windows_install_directory()
 
 
 def default_windows_install_path(version: str, executable_sha256: str) -> Path:
@@ -61,6 +81,13 @@ def default_linux_install_path() -> Path:
 
 
 def install_for_current_user(source: Path | None = None, version: str | None = None) -> InstallationResult:
+    if sys.platform == "win32":
+        with _windows_installation_lock():
+            return _install_for_current_user_unlocked(source, version)
+    return _install_for_current_user_unlocked(source, version)
+
+
+def _install_for_current_user_unlocked(source: Path | None, version: str | None) -> InstallationResult:
     if sys.platform != "win32" and not sys.platform.startswith("linux"):
         raise ConfigurationError(
             "installation_unsupported",
@@ -120,7 +147,10 @@ def install_for_current_user(source: Path | None = None, version: str | None = N
                 _system_error_message("Les permissions du lanceur sont invalides", exc),
             ) from exc
     try:
-        register_protocol(target)
+        if sys.platform == "win32":
+            register_windows_installation(target, version or "")
+        else:
+            register_protocol(target)
     except ConfigurationError:
         raise
     except OSError as exc:
@@ -306,11 +336,15 @@ def _snapshot_windows_processes(candidate_names: dict[str, Path]) -> tuple[Runni
     return tuple(sorted(results, key=lambda item: item.pid))
 
 
-def uninstall_for_current_user() -> Path:
+def uninstall_for_current_user() -> UninstallationResult:
+    """Remove only this user's launcher and registration, retaining all user data."""
+    if sys.platform == "win32":
+        with _windows_installation_lock():
+            return _uninstall_windows_for_current_user()
     if not sys.platform.startswith("linux"):
         raise ConfigurationError(
             "uninstallation_unsupported",
-            "La désinstallation intégrée est actuellement disponible sous Linux uniquement.",
+            "La désinstallation intégrée est disponible sous Windows et Linux.",
         )
     target = default_linux_install_path()
     unregister_linux_protocol()
@@ -323,4 +357,188 @@ def uninstall_for_current_user() -> Path:
         pass
     except OSError as exc:
         raise ConfigurationError("uninstallation_failed", "Le lanceur Linux n’a pas pu être supprimé.") from exc
-    return target
+    return UninstallationResult(target)
+
+
+def _uninstall_windows_for_current_user() -> UninstallationResult:
+    directory = default_windows_install_directory().absolute()
+    sentinel = directory / _LEGACY_WINDOWS_LAUNCHER
+    if not is_owned_windows_launcher(sentinel):
+        raise ConfigurationError("uninstallation_failed", "Le dossier d’installation Windows est invalide.")
+    unregister_windows_installation()
+    candidates = tuple(
+        path for path in _previous_windows_launchers(directory / "uninstaller-placeholder")
+        if is_owned_windows_launcher(path) and path.is_file()
+    )
+    running = find_running_windows_launchers(candidates)
+    running_paths = {_normalized_windows_path(instance.path) for instance in running}
+    if getattr(sys, "frozen", False):
+        running_paths.add(_normalized_windows_path(Path(sys.executable)))
+    deferred = []
+    for path in candidates:
+        if _normalized_windows_path(path) in running_paths:
+            deferred.append(path)
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            deferred.append(path)
+    if deferred:
+        try:
+            _schedule_windows_uninstall_cleanup(directory, tuple(deferred), running)
+        except OSError as exc:
+            raise ConfigurationError(
+                "uninstallation_cleanup_failed",
+                "L’inscription a été retirée, mais le nettoyage différé n’a pas pu démarrer. Les documents sont conservés.",
+            ) from exc
+    else:
+        try:
+            directory.rmdir()
+        except OSError:
+            # Unknown files, configuration and recovery directories are never removed.
+            pass
+    return UninstallationResult(directory, tuple(deferred))
+
+
+def _windows_powershell_path() -> Path:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetSystemDirectoryW.argtypes = (wintypes.LPWSTR, wintypes.UINT)
+    kernel32.GetSystemDirectoryW.restype = wintypes.UINT
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    if length == 0 or length >= len(buffer):
+        raise ctypes.WinError(ctypes.get_last_error())
+    executable = Path(buffer.value) / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if not executable.is_file():
+        raise OSError("Windows PowerShell is unavailable")
+    return executable
+
+
+def _windows_installation_mutex_name() -> str:
+    directory = _normalized_windows_path(default_windows_install_directory())
+    fingerprint = hashlib.sha256(directory.encode("utf-8")).hexdigest()
+    return "Global\\DoliLocalEdit-Install-" + fingerprint
+
+
+@contextmanager
+def _windows_installation_lock() -> Iterator[None]:
+    """Serialize installation and delayed deletion for this user's exact directory."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.ReleaseMutex.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateMutexW(None, False, _windows_installation_mutex_name())
+    if not handle:
+        raise ConfigurationError("installation_lock_failed", "Le verrou d’installation Windows est inaccessible.")
+    acquired = False
+    try:
+        result = kernel32.WaitForSingleObject(handle, 30000)
+        acquired = result in {0, 0x00000080}
+        if not acquired:
+            raise ConfigurationError("installation_busy", "Une autre installation ou désinstallation est en cours. Réessayez.")
+        yield
+    finally:
+        if acquired:
+            kernel32.ReleaseMutex(handle)
+        kernel32.CloseHandle(handle)
+
+
+def _schedule_windows_uninstall_cleanup(
+    directory: Path,
+    candidates: tuple[Path, ...],
+    running: tuple[RunningLauncher, ...],
+) -> None:
+    """Run fixed, hidden cleanup code after owned processes finish, without a shell."""
+    entries = []
+    for path in candidates:
+        if not is_owned_windows_launcher(path) or path.parent != directory:
+            raise OSError("Unsafe deferred launcher cleanup target")
+        pids = [instance.pid for instance in running if instance.path == path]
+        if getattr(sys, "frozen", False) and _normalized_windows_path(path) == _normalized_windows_path(Path(sys.executable)):
+            pids.append(os.getpid())
+        entries.append({"path": str(path), "sha256": _file_sha256(path), "pids": sorted(set(pids))})
+    payload = json.dumps({"directory": str(directory), "mutex": _windows_installation_mutex_name(), "files": entries}).encode("utf-8")
+    encoded = base64.b64encode(_WINDOWS_UNINSTALL_CLEANUP.encode("utf-16-le")).decode("ascii")
+    process = subprocess.Popen(
+        [str(_windows_powershell_path()), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        shell=False,
+        close_fds=True,
+        creationflags=0x08000000 | 0x00000200,
+    )
+    # The child deliberately outlives this launcher. A daemon reaps it when this
+    # process remains alive, without blocking shutdown or leaking Popen warnings.
+    threading.Thread(target=process.wait, name="dolilocaledit-uninstall-cleanup", daemon=True).start()
+    if process.stdin is None:
+        raise OSError("Deferred cleanup input pipe is unavailable")
+    try:
+        process.stdin.write(payload)
+    finally:
+        process.stdin.close()
+
+
+_WINDOWS_UNINSTALL_CLEANUP = r'''
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+$data = ConvertFrom-Json ([Console]::In.ReadToEnd())
+$root = [IO.Path]::GetFullPath([string]$data.directory)
+$deadline = [DateTime]::UtcNow.AddHours(1)
+$mutex = [Threading.Mutex]::new($false, [string]$data.mutex)
+function Test-OwnedPath([string]$path) {
+    $full = [IO.Path]::GetFullPath($path)
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($full), $root, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if ([IO.Path]::GetFileName($full) -notmatch '^dolilocaledit-launcher(?:-[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{64})?\.exe$') { return $false }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer) { return $false }
+    while ($null -ne $item) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        $item = if ($item -is [IO.DirectoryInfo]) { $item.Parent } else { $item.Directory }
+    }
+    return $true
+}
+foreach ($entry in $data.files) {
+    $target = [string]$entry.path
+    if (-not (Test-OwnedPath $target)) { continue }
+    $ready = $true
+    foreach ($processId in $entry.pids) {
+        try { $process = [Diagnostics.Process]::GetProcessById([int]$processId) }
+        catch [ArgumentException] { continue }
+        try {
+            $image = $process.MainModule.FileName
+            if (-not [string]::Equals($image, $target, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $remaining = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            if (-not $process.WaitForExit($remaining)) { $ready = $false; break }
+        } catch { $ready = $false; break }
+        finally { $process.Dispose() }
+    }
+    if (-not $ready) { continue }
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        $locked = $false
+        try {
+            try { $locked = $mutex.WaitOne(30000) }
+            catch [Threading.AbandonedMutexException] { $locked = $true }
+            if (-not $locked) { break }
+            if (-not (Test-OwnedPath $target)) { break }
+            $arp = Get-ItemProperty -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\DoliLocalEdit' -ErrorAction SilentlyContinue
+            $protocol = Get-ItemProperty -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\dolilocaledit\shell\open\command' -ErrorAction SilentlyContinue
+            if ($null -ne $arp -and $arp.UninstallString -eq ('"' + $target + '" uninstall')) { break }
+            if ($null -ne $protocol -and $protocol.'(default)' -eq ('"' + $target + '" open "%1"')) { break }
+            if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne [string]$entry.sha256) { break }
+            Remove-Item -LiteralPath $target -Force
+            break
+        } catch { Start-Sleep -Milliseconds 100 }
+        finally { if ($locked) { $mutex.ReleaseMutex() } }
+    }
+}
+$mutex.Dispose()
+# Leave the directory itself intact: another installation can already be using it.
+'''

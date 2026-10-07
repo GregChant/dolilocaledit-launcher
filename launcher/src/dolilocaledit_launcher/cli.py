@@ -17,10 +17,12 @@ from .approval import (
     show_installation_error,
     show_launcher_check_error,
     show_launcher_error,
+    show_uninstallation_complete,
+    show_uninstallation_error,
 )
 from .config import default_config_path, default_recovery_root, forget_editor_choice, load_config, trust_origin
 from .errors import LauncherError, ProtocolError
-from .installation import cleanup_obsolete_windows_launchers, install_for_current_user, uninstall_for_current_user
+from .installation import install_for_current_user, uninstall_for_current_user
 from .protocol import inspect_check_uri, inspect_launch_uri, parse_check_uri, protocol_operation
 from .registration import register_protocol
 from .session import EditingSessionRunner, PreparedSession
@@ -43,7 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser = subparsers.add_parser("install", help="installer le lanceur pour l’utilisateur courant")
     install_parser.add_argument("--source", type=Path)
     install_parser.add_argument("--quiet", action="store_true", help="ne pas afficher la confirmation graphique")
-    subparsers.add_parser("uninstall", help="désinstaller le lanceur Linux en conservant les reprises")
+    uninstall_parser = subparsers.add_parser("uninstall", help="désinstaller le lanceur en conservant les reprises")
+    uninstall_parser.add_argument("--quiet", action="store_true", help="ne pas afficher de dialogue graphique")
     subparsers.add_parser("_worker", help=argparse.SUPPRESS)
     return parser
 
@@ -56,8 +59,6 @@ def main(argv: list[str] | None = None) -> int:
         arguments.insert(0, "open")
     parser = build_parser()
     options = parser.parse_args(arguments)
-    if sys.platform == "win32" and getattr(sys, "frozen", False):
-        cleanup_obsolete_windows_launchers(Path(sys.executable))
     document_name: str | None = None
     server_origin: str | None = None
     launcher_check = False
@@ -97,7 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if options.command == "uninstall":
             removed = uninstall_for_current_user()
-            _safe_print(f"Doli Local Edit désinstallé : {removed}")
+            if options.quiet:
+                _safe_print(f"Doli Local Edit désinstallé : {removed.path}")
+            else:
+                show_uninstallation_complete(removed.path, removed.deferred_files)
             return 0
         if options.command == "open":
             if protocol_operation(options.uri) == "check":
@@ -169,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     except LauncherError as exc:
         if options.command == "install" and not getattr(options, "quiet", False):
             show_installation_error(exc.code, str(exc))
+        elif options.command == "uninstall" and not getattr(options, "quiet", False):
+            show_uninstallation_error(exc.code, str(exc))
         elif launcher_check and (sys.platform == "win32" or sys.platform.startswith("linux")):
             show_launcher_check_error(exc.code, str(exc))
         if (

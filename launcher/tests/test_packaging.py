@@ -51,6 +51,10 @@ class PackagingTest(unittest.TestCase):
             manifest = json.loads((catalog / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema"], 1)
             self.assertEqual({entry["platform"] for entry in manifest["artifacts"]}, {"windows", "linux"})
+            self.assertEqual(
+                {entry["filename"] for entry in manifest["artifacts"]},
+                {"DoliLocalEdit-Setup.exe", "DoliLocalEdit-linux-x86_64.tar.gz"},
+            )
             for entry in manifest["artifacts"]:
                 artifact = catalog / "files" / entry["filename"]
                 self.assertEqual(entry["byte_size"], artifact.stat().st_size)
@@ -120,10 +124,35 @@ class PackagingTest(unittest.TestCase):
                     + entry["filename"],
                 )
                 self.assertTrue((catalog / "files" / entry["filename"]).is_file())
+                self.assertEqual(entry["download_name"], entry["filename"])
             with zipfile.ZipFile(module_zip) as archive:
                 names = set(archive.namelist())
             self.assertIn("dolilocaledit/resources/launchers/manifest.json", names)
             self.assertFalse(any(name.startswith("dolilocaledit/resources/launchers/files/") for name in names))
+
+    def test_artifact_names_and_bytes_do_not_depend_on_release_version(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "scripts/package-launchers.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            windows = root / "launcher.exe"
+            linux = root / "launcher-linux"
+            installer = root / "install.sh"
+            windows.write_bytes(b"unchanged signed windows fixture")
+            linux.write_bytes(b"unchanged linux fixture")
+            installer.write_text("#!/bin/sh\nexit 0\n")
+            catalogs = []
+            for version in ("1.2.0", "1.3.0"):
+                catalog = root / version
+                result = subprocess.run(
+                    [sys.executable, str(script), "--version", version,
+                     "--catalog-directory", str(catalog), "--windows-executable", str(windows),
+                     "--linux-executable", str(linux), "--linux-installer", str(installer)],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                catalogs.append(json.loads((catalog / "manifest.json").read_text()))
+            self.assertEqual(catalogs[0]["artifacts"], catalogs[1]["artifacts"])
+            self.assertNotEqual(catalogs[0]["version"], catalogs[1]["version"])
 
 
 if __name__ == "__main__":

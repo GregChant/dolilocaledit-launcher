@@ -41,8 +41,8 @@ PYTHONPATH=launcher/src python3 -m unittest discover -s launcher/tests -v
 PYTHONPATH=launcher/src python3 -m dolilocaledit_launcher config-path
 ```
 
-Le parcours HTTP de bout en bout avec Dolibarr reste qualifié dans le dépôt privé du module ; ce
-dépôt public exerce uniquement la frontière locale et le paquetage du lanceur.
+Le parcours HTTP de bout en bout avec Dolibarr reste qualifié dans le dépôt du module ; ce
+dépôt public exerce la frontière locale et le paquetage du lanceur.
 
 Pour une installation Python locale de développement :
 
@@ -167,6 +167,19 @@ depuis `pyproject.toml`. Vérifier ces propriétés avant d'appliquer la signatu
 Pour un déploiement géré, `dolilocaledit-launcher.exe install --quiet` effectue la même
 installation par utilisateur sans boîte de confirmation.
 
+À partir de la version 1.1.1, l'installation crée aussi une entrée **Doli Local Edit** dans
+**Applications installées / Programmes et fonctionnalités**, avec l'éditeur **Experts Conseils
+Chanton** et la version du lanceur. La désinstallation est disponible depuis cette entrée ou
+avec `DoliLocalEdit-Setup.exe uninstall`, sans droit administrateur. L'option `uninstall --quiet`
+supprime les dialogues et conserve les mêmes contrôles ; les codes retour sont `0` pour le
+succès et `2` pour une erreur.
+
+La désinstallation retire l'entrée du profil courant et le protocole uniquement lorsqu'il
+pointe encore vers un exécutable reconnu dans son installation. Elle conserve une association
+reprise par une autre application, les configurations et les copies de reprise. Aucun
+processus d'édition n'est arrêté ; les exécutables encore utilisés restent présents et un
+nettoyage différé retire les fichiers libérés lorsqu'il le peut.
+
 L'installation interactive affiche une boîte de réussite avec la version, le chemin installé et
 la confirmation d'enregistrement du protocole, ou une boîte d'échec avec un code exploitable.
 Le bouton **Tester le lanceur** de Dolibarr prépare ensuite une opération
@@ -186,8 +199,15 @@ clé privée.
 
 Les exécutables et leur code source correspondant sont publiés séparément dans le dépôt public
 [`GregChant/dolilocaledit-launcher`](https://github.com/GregChant/dolilocaledit-launcher). Le
-lanceur Windows 1.1.0 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
+lanceur Windows 1.1.1 est signé et horodaté par l'éditeur ; le binaire Linux x86-64 est construit
 et lancé dans la porte locale. L'archive et `SHA256SUMS` sont signés par la clé OpenPGP de
 livraison `A51F BBAB 9A50 9277 1768 E839 8C95 07E9 997C 0569`. macOS doit encore être construit,
 testé, signé et notarié. Voir la
 [présentation de la publication](../README.md).
+
+La version du lanceur évolue indépendamment de celle du module Dolibarr. Une mise à jour du
+seul serveur réutilise les exécutables signés existants lorsque leurs entrées de construction
+et le contrat de protocole restent compatibles. Le téléchargement Windows conserve le nom
+`DoliLocalEdit-Setup.exe` ; les propriétés du fichier indiquent sa version. La version 1.1.1
+ajoute la désinstallation Windows sans droit administrateur et nécessite donc de nouveaux
+exécutables ; elle pourra être conservée pour les prochaines versions du seul module.

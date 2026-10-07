@@ -124,6 +124,46 @@ def show_installation_error(code: str, message: str) -> None:
         print(content, file=sys.stderr)
 
 
+def show_uninstallation_complete(path: Path, deferred_files: tuple[Path, ...] = ()) -> None:
+    """Confirm removal while explaining that existing editing sessions remain safe."""
+    safe_path = _safe_dialog_value(str(path), 512) or "emplacement local"
+    message = (
+        "Désinstallation réussie\n\n"
+        f"Emplacement : {safe_path}\n"
+        "L’inscription de Doli Local Edit pour votre compte a été retirée.\n"
+        "Vos documents, votre configuration et vos copies de reprise sont conservés."
+    )
+    if deferred_files:
+        message += (
+            "\n\nLes éditions en cours continuent normalement. Les exécutables encore utilisés "
+            "seront supprimés après leur fermeture lorsque le nettoyage différé le permet."
+        )
+    if sys.platform == "win32":
+        _windows_message(message, 0x00000040 | 0x00010000)
+    elif sys.platform.startswith("linux") and _linux_message(message, "info"):
+        return
+    else:
+        print(message)
+
+
+def show_uninstallation_error(code: str, message: str) -> None:
+    """Show an uninstall error without suggesting termination of active editors."""
+    safe_code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "uninstallation_error"
+    safe_message = _safe_dialog_value(message, 512) or "Une erreur locale s’est produite."
+    content = (
+        "La désinstallation de Doli Local Edit n’a pas pu être terminée.\n\n"
+        f"Problème : {safe_message}\n"
+        "Vos documents et copies de reprise sont conservés. Terminez vos éditions puis réessayez.\n"
+        f"Code de diagnostic : {safe_code}"
+    )
+    if sys.platform == "win32":
+        _windows_message(content, 0x00000010 | 0x00010000)
+    elif sys.platform.startswith("linux") and _linux_message(content, "error"):
+        return
+    else:
+        print(content, file=sys.stderr)
+
+
 def show_launcher_check_error(code: str, message: str) -> None:
     """Explain why a Dolibarr-to-launcher capability check failed locally."""
     safe_code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "launcher_check_error"

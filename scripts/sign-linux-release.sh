@@ -32,15 +32,82 @@ if grep -Fq -- "$DLE_PRIVATE_MARKER" "$DLE_PUBLIC_KEY"; then
 	exit 65
 fi
 
-for DLE_COMMAND in gpg sha256sum mktemp install; do
+for DLE_COMMAND in gpg sha256sum mktemp install python3; do
 	if ! command -v "$DLE_COMMAND" >/dev/null 2>&1; then
 		echo "Required Linux signing command is unavailable: $DLE_COMMAND" >&2
 		exit 69
 	fi
 done
 
-DLE_WINDOWS_NAME="DoliLocalEdit-Setup-$DLE_VERSION.exe"
-DLE_LINUX_NAME="DoliLocalEdit-linux-x86_64-$DLE_VERSION.tar.gz"
+DLE_ARTIFACT_NAMES=$(python3 - "$DLE_VERSION" "$DLE_CATALOG_DIRECTORY" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+version, directory = sys.argv[1:]
+catalog = Path(directory)
+manifest_path = catalog / "manifest.json"
+try:
+    if manifest_path.is_symlink():
+        raise ValueError("Launcher manifest is unsafe")
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or manifest.get("schema") not in {1, 2} or manifest.get("version") != version:
+            raise ValueError("Launcher manifest version or schema is invalid")
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list) or len(artifacts) != 2:
+            raise ValueError("Linux release signing requires exactly two launcher artifacts")
+        names = {}
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise ValueError("Launcher manifest artifact is invalid")
+            platform = artifact.get("platform")
+            name = artifact.get("filename")
+            size = artifact.get("byte_size")
+            digest = artifact.get("sha256")
+            if (
+                not isinstance(platform, str)
+                or platform not in {"windows", "linux"}
+                or platform in names
+                or artifact.get("architecture") != "x86_64"
+                or not isinstance(name, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name) is None
+                or not name.endswith(".exe" if platform == "windows" else ".tar.gz")
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or size < 1
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+            ):
+                raise ValueError("Launcher manifest artifact identity is invalid")
+            expected_url = f"https://github.com/GregChant/dolilocaledit-launcher/releases/download/v{version}/{name}"
+            if (manifest["schema"] == 2 and artifact.get("url") != expected_url) or (manifest["schema"] == 1 and "url" in artifact):
+                raise ValueError("Launcher URL is not the immutable official release URL")
+            path = catalog / "files" / name
+            if path.is_symlink() or not path.is_file() or (catalog / "files").is_symlink() or path.stat().st_size != size:
+                raise ValueError("Launcher artifact is missing or does not match its manifest")
+            sha256 = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    sha256.update(block)
+            if sha256.hexdigest() != digest:
+                raise ValueError("Launcher artifact SHA-256 does not match its manifest")
+            names[platform] = name
+        print(names["windows"])
+        print(names["linux"])
+    else:
+        # Compatibility with historical release catalogs created before manifests were required.
+        print(f"DoliLocalEdit-Setup-{version}.exe")
+        print(f"DoliLocalEdit-linux-x86_64-{version}.tar.gz")
+except (OSError, UnicodeError, ValueError) as exc:
+    print(f"Linux release catalog rejected: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+PY
+)
+DLE_WINDOWS_NAME=$(printf '%s\n' "$DLE_ARTIFACT_NAMES" | sed -n '1p')
+DLE_LINUX_NAME=$(printf '%s\n' "$DLE_ARTIFACT_NAMES" | sed -n '2p')
 DLE_WINDOWS_PATH="$DLE_CATALOG_DIRECTORY/files/$DLE_WINDOWS_NAME"
 DLE_LINUX_PATH="$DLE_CATALOG_DIRECTORY/files/$DLE_LINUX_NAME"
 for DLE_ARTIFACT in "$DLE_WINDOWS_PATH" "$DLE_LINUX_PATH"; do

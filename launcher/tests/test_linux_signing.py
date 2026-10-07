@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -104,7 +105,27 @@ class LinuxReleaseSigningTest(unittest.TestCase):
             )
             self.assertEqual(verified.returncode, 0, verified.stderr.decode("utf-8", "replace"))
 
-            # The generic command exports the public key and delegates both signatures.
+            # New releases keep stable names; historical versioned filenames remain valid above.
+            stable_windows = files / "DoliLocalEdit-Setup.exe"
+            stable_linux = files / "DoliLocalEdit-linux-x86_64.tar.gz"
+            windows.rename(stable_windows)
+            linux.rename(stable_linux)
+            windows, linux = stable_windows, stable_linux
+            artifacts = []
+            for platform, artifact in (("windows", windows), ("linux", linux)):
+                artifacts.append({
+                    "platform": platform,
+                    "architecture": "x86_64",
+                    "filename": artifact.name,
+                    "byte_size": artifact.stat().st_size,
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "url": f"https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.3/{artifact.name}",
+                })
+            (catalog / "manifest.json").write_text(json.dumps({
+                "schema": 2, "version": "1.0.3", "artifacts": artifacts,
+            }))
+
+            # The generic command exports only the public key and selects names from the catalog.
             generic = repository / "scripts" / "sign-linux.sh"
             generic_environment = {
                 **environment,
@@ -125,7 +146,15 @@ class LinuxReleaseSigningTest(unittest.TestCase):
             self.assertIn(fingerprint, result.stdout)
             self.assertEqual((catalog / "dolilocaledit-release-key.asc").read_bytes(), exported)
             self.assertEqual(list(root.glob("dolilocaledit-public-signing-key.*")), [])
-            self.assertEqual((catalog / "SHA256SUMS").read_text(encoding="ascii").splitlines(), checksum_lines)
+            checksum_lines = (catalog / "SHA256SUMS").read_text(encoding="ascii").splitlines()
+            self.assertTrue(checksum_lines[0].endswith("  DoliLocalEdit-Setup.exe"))
+            self.assertTrue(checksum_lines[1].endswith("  DoliLocalEdit-linux-x86_64.tar.gz"))
+            linux_signature = linux.with_name(linux.name + ".asc")
+            verified = subprocess.run(
+                ["gpg", "--batch", "--verify", str(linux_signature), str(linux)],
+                check=False, env=environment, capture_output=True,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stderr.decode("utf-8", "replace"))
 
             linux.write_bytes(b"tampered linux fixture")
             rejected = subprocess.run(
@@ -136,6 +165,42 @@ class LinuxReleaseSigningTest(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
             self.assertNotEqual(rejected.returncode, 0)
+
+    def test_signing_rejects_catalog_substitution_before_key_authentication(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "scripts/sign-linux-release.sh"
+        for invalid in ("url", "sha256", "version"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                files = root / "files"
+                files.mkdir()
+                public_key = root / "public-key.asc"
+                public_key.write_text("Public-key fixture never imported before catalog validation\n")
+                artifacts = []
+                for platform, name in (("windows", "DoliLocalEdit-Setup.exe"), ("linux", "DoliLocalEdit-linux-x86_64.tar.gz")):
+                    artifact = files / name
+                    artifact.write_bytes(b"artifact fixture")
+                    artifacts.append({
+                        "platform": platform, "architecture": "x86_64", "filename": name,
+                        "byte_size": artifact.stat().st_size,
+                        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                        "url": f"https://github.com/GregChant/dolilocaledit-launcher/releases/download/v1.0.3/{name}",
+                    })
+                manifest = {"schema": 2, "version": "1.0.3", "artifacts": artifacts}
+                if invalid == "version":
+                    manifest["version"] = "1.0.4"
+                else:
+                    artifacts[0][invalid] = "https://example.invalid/launcher.exe" if invalid == "url" else "f" * 64
+                (root / "manifest.json").write_text(json.dumps(manifest))
+                result = subprocess.run(
+                    [str(script), "1.0.3", str(root)],
+                    env={**os.environ, "DLE_LINUX_SIGNING_KEY_FINGERPRINT": "A" * 40,
+                         "DLE_LINUX_SIGNING_PUBLIC_KEY": str(public_key)},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 65, result.stderr)
+                self.assertIn("Linux release catalog rejected", result.stderr)
+                self.assertNotIn("signing key is unavailable", result.stderr)
+                self.assertFalse((root / "SHA256SUMS").exists())
 
 
 class GenericSigningArgumentsTest(unittest.TestCase):
